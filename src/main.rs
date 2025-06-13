@@ -97,7 +97,7 @@ async fn run() -> Result<()> {
 
             println!("🔍 Starting repository analysis...");
             println!("📁 Repo: {}", args.repo_path.display());
-            println!("🤖 Provider: {}", args.provider);
+            println!("🤖 Provider: {}", args.provider.as_deref().unwrap_or("default"));
             println!("📄 Output: {}", args.output.display());
 
             // analyzer.analyze().await?;
@@ -124,12 +124,12 @@ fn create_config(args: &AnalyzeArgs) -> Result<Config> {
     let mut config = Config::load_or_default(&args.repo_path)?;
 
     // Override LLM provider if passed in CLI args
-    if !args.provider.is_empty() {
-        config.llm.provider = match args.provider.as_str() {
+    if let Some(provider) = &args.provider {
+        config.llm.provider = match provider.as_str() {
             "anthropic" => LlmProvider::Anthropic,
             "openai" => LlmProvider::OpenAI,
             "openrouter" => LlmProvider::OpenRouter,
-            _ => return Err(Error::InvalidProvider(args.provider.clone())),
+            _ => return Err(Error::InvalidProvider(provider.clone())),
         };
     }
 

@@ -6,6 +6,10 @@ use sqlx::{SqlitePool, Row};
 use tokio::time::{sleep, Duration};
 use rig::{completion::Prompt, providers::openai};
 
+use raidme::{
+    config::{Config},
+};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnalysisStep {
     pub id: String,
@@ -48,45 +52,8 @@ pub struct KnowledgeEntry {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Clone)]
-pub struct AnalysisConfig {
-    pub repository_path: PathBuf,
-    pub output_path: PathBuf,
-    pub llm_provider: String,
-    pub llm_model: String,
-    pub api_key: String,
-    pub max_tokens: u32,
-    pub temperature: f32,
-    pub max_retries: u32,
-    pub retry_delay_seconds: u64,
-    pub ignore_patterns: Vec<String>,
-}
-
-impl Default for AnalysisConfig {
-    fn default() -> Self {
-        Self {
-            repository_path: PathBuf::from("."),
-            output_path: PathBuf::from("README.ai.md"),
-            llm_provider: "openai".to_string(),
-            llm_model: "gpt-4".to_string(),
-            api_key: String::new(),
-            max_tokens: 4000,
-            temperature: 0.3,
-            max_retries: 3,
-            retry_delay_seconds: 2,
-            ignore_patterns: vec![
-                ".git".to_string(),
-                "node_modules".to_string(),
-                "target".to_string(),
-                "*.lock".to_string(),
-                "*.log".to_string(),
-            ],
-        }
-    }
-}
-
 pub struct RepositoryAnalyzer {
-    config: AnalysisConfig,
+    config: Config,
     db: SqlitePool,
     llm_client: Box<dyn LLMClient>,
 }
@@ -122,59 +89,7 @@ impl LLMClient for OpenAIClient {
 }
 
 impl RepositoryAnalyzer {
-    pub async fn new(config: AnalysisConfig) -> Result<Self> {
-        let database_url = "sqlite:knowledge.db";
-        let db = SqlitePool::connect(database_url).await
-            .context("Failed to connect to SQLite database")?;
-
-        // Create tables if they don't exist instead of using migrations
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS analysis_steps (
-                id TEXT PRIMARY KEY,
-                step_type TEXT NOT NULL,
-                status TEXT NOT NULL,
-                input_data TEXT NOT NULL,
-                output_data TEXT,
-                error_message TEXT,
-                created_at TEXT NOT NULL,
-                completed_at TEXT
-            )
-            "#
-        ).execute(&db).await.context("Failed to create analysis_steps table")?;
-
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS knowledge_entries (
-                id TEXT PRIMARY KEY,
-                category TEXT NOT NULL,
-                subcategory TEXT,
-                title TEXT NOT NULL,
-                content TEXT NOT NULL,
-                relevance_score REAL NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            "#
-        ).execute(&db).await.context("Failed to create knowledge_entries table")?;
-
-        // Create indexes
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_analysis_steps_status ON analysis_steps(status)"
-        ).execute(&db).await?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_analysis_steps_created_at ON analysis_steps(created_at)"
-        ).execute(&db).await?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_knowledge_entries_category ON knowledge_entries(category)"
-        ).execute(&db).await?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_knowledge_entries_relevance ON knowledge_entries(relevance_score DESC)"
-        ).execute(&db).await?;
-
+    pub async fn new(config: Config) -> Result<Self> {
         let llm_client: Box<dyn LLMClient> = match config.llm_provider.as_str() {
             "openai" => {
                 let client = openai::Client::new(&config.api_key);
@@ -915,16 +830,8 @@ This project follows a modular architecture with clear separation of concerns.
     async fn test_directory_structure_analysis() {
         let temp_repo = create_test_repo();
         let repo_path = temp_repo.path().to_path_buf();
-
-        let config = AnalysisConfig {
-            repository_path: repo_path.clone(),
-            output_path: repo_path.join("README.ai.md"),
-            api_key: "test-key".to_string(),
-            ..Default::default()
-        };
-
-        // Test directory structure generation
-        let structure = config.repository_path.to_str().unwrap();
+        let mut config = Config::load_or_default(repo_path.clone())?;
+        config.llm.api_key = "test-key".to_string();
 
         // This is a basic test - in real scenarios you'd have a proper LLM client
         // For now, just test that the structure can be read
@@ -934,40 +841,11 @@ This project follows a modular architecture with clear separation of concerns.
     }
 
     #[test]
-    fn test_should_ignore() {
-        let config = AnalysisConfig::default();
-
-        assert!(config.ignore_patterns.iter().any(|pattern| {
-            if pattern.contains('*') {
-                let pattern = pattern.replace("*", "");
-                "test.lock".contains(&pattern)
-            } else {
-                "test.lock" == pattern
-            }
-        }));
-
-        // Test that .git is ignored
-        assert!(config.ignore_patterns.contains(&".git".to_string()));
-
-        // Test that normal files are not ignored
-        let should_not_ignore = !config.ignore_patterns.iter().any(|pattern| {
-            if pattern.contains('*') {
-                let pattern = pattern.replace("*", "");
-                "main.rs".contains(&pattern)
-            } else {
-                "main.rs" == pattern
-            }
-        });
-        assert!(should_not_ignore);
-    }
-
-    #[test]
     fn test_identify_key_files() {
         let temp_repo = create_test_repo();
-        let config = AnalysisConfig {
-            repository_path: temp_repo.path().to_path_buf(),
-            ..Default::default()
-        };
+        let repo_path = temp_repo.path().to_path_buf();
+        let mut config = Config::load_or_default(repo_path.clone())?;
+        config.llm.api_key = "test-key".to_string();
 
         // Create analyzer without database for testing
         let analyzer = RepositoryAnalyzer {

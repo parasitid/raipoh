@@ -34,8 +34,8 @@ struct AnalyzeArgs {
     repo_path: PathBuf,
 
     /// LLM provider to use (anthropic, openai, openrouter)
-    #[arg(short, long, default_value = "anthropic")]
-    provider: String,
+    #[arg(short, long)]
+    provider: Option<String>,
 
     /// API key for the LLM provider
     #[arg(short, long)]
@@ -70,7 +70,14 @@ struct StatusArgs {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
+    if let Err(err) = run().await {
+        eprintln!("{}", err); // <- This uses your #[error("...")] message!
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> Result<()> {
     env_logger::init();
 
     let cli = Cli::parse();
@@ -142,16 +149,27 @@ fn create_config(args: &AnalyzeArgs) -> Result<Config> {
         config.llm.base_url = Some(base_url.clone());
     }
 
-    // Override model if CLI arg present, else keep config or set default
-    config.llm.model = args.model.clone().unwrap_or_else(|| {
-        match config.llm.provider {
+    // Determine the model with the following precedence:
+    // 1. CLI argument
+    // 2. Config value (non-empty)
+    // 3. Provider default
+
+    config.llm.model = args.model.clone()
+        .filter(|m| !m.is_empty())
+        .or_else(|| {
+            if !config.llm.model.is_empty() {
+                Some(config.llm.model.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| match config.llm.provider {
             LlmProvider::Anthropic => "claude-3-sonnet-20240229".to_string(),
             LlmProvider::OpenAI => "gpt-4-turbo-preview".to_string(),
             LlmProvider::OpenRouter => "anthropic/claude-3-sonnet".to_string(),
             LlmProvider::Ollama => "ollama-default".to_string(),
-        }
-    });
-
+        });
+    
     // You can override other parts similarly, e.g. context, commit_each_step, etc.
 
     config.validate()?;

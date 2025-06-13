@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{SqlitePool};
 use tokio::time::{sleep, Duration};
 
-use raidme::{
+use crate::{
     config::{Config},
     llm::LlmClient,
 };
@@ -57,7 +57,7 @@ pub struct KnowledgeEntry {
 pub struct RepositoryAnalyzer {
     config: Config,
     db: SqlitePool,
-    llm_client: Box<dyn LlmClient>,
+    llm_client: Box<LlmClient>,
     repo_path: PathBuf,
 }
 

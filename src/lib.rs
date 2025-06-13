@@ -31,7 +31,7 @@ impl Raidme {
         let database_url = format!("sqlite:{}.db", config.git.repository.name);
         let pool = SqlitePool::connect(&database_url)
             .await
-            .context("Failed to connect to SQLite database")?;
+            .with_context(|| "Failed to connect to SQLite database")?;
 
         // Create tables if they don't exist
         sqlx::query(

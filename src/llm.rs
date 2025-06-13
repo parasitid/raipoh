@@ -55,7 +55,7 @@ impl LlmClient {
 
     /// Generate a completion for the given prompt
     pub async fn complete(&self, prompt: &str) -> Result<String> {
-        let prompt = Prompt::Text(prompt.to_string());
+        let prompt = dyn Prompt::Text(prompt.to_string());
         let response = self.model.completion(prompt).await?;
         Ok(response.content)
     }
@@ -66,7 +66,7 @@ impl LlmClient {
             ("system".to_string(), system.to_string()),
             ("user".to_string(), user.to_string()),
         ];
-        let prompt = Prompt::Chat(messages);
+        let prompt = dyn Prompt::Chat(messages);
         let response = self.model.completion(prompt).await?;
         Ok(response.content)
     }

@@ -24,7 +24,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 # Database
-sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-native-tls", "migrate", "macros"] }
+sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-native-tls", "migrate", "macros", "chrono"] }
 
 # Async traits
 async-trait = "0.1"

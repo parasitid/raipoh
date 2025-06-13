@@ -45,6 +45,10 @@ struct AnalyzeArgs {
     #[arg(short, long)]
     model: Option<String>,
 
+    /// Custom base URL for LLM API (overrides default)
+    #[arg(long)]
+    base_url: Option<String>,
+
     /// Output path for the knowledge file
     #[arg(short, long, default_value = "README.ai.md")]
     output: PathBuf,
@@ -132,6 +136,11 @@ fn create_config(args: &AnalyzeArgs) -> Result<Config> {
             LlmProvider::Ollama => None,
         })
         .unwrap_or_else(|| config.llm.api_key.clone());
+
+    // Override base URL if specified
+    if let Some(base_url) = &args.base_url {
+        config.llm.base_url = Some(base_url.clone());
+    }
 
     // Override model if CLI arg present, else keep config or set default
     config.llm.model = args.model.clone().unwrap_or_else(|| {

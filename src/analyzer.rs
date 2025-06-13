@@ -4,7 +4,7 @@ use anyhow::{Result, Context};
 use serde::{Deserialize, Serialize};
 use sqlx::{SqlitePool, Row};
 use tokio::time::{sleep, Duration};
-use rig_core::{completion::Prompt, providers::openai};
+use rig::{completion::Prompt, providers::openai};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnalysisStep {

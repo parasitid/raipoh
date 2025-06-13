@@ -20,13 +20,40 @@ use tracing::info;
 pub struct Raidme {
     config: Config,
     llm_client: LlmClient,
+    pool: SqlitePool,
 }
 
 impl Raidme {
     /// Create a new Raidme instance with the given configuration
     pub fn new(config: Config) -> Result<Self> {
-        let llm_client = LlmClient::new(&config)?;
-        Ok(Self { config, llm_client })
+        // Initialize database connection
+        let database_url = format!("sqlite:{}.db", config.git.repository.name);
+        let pool = SqlitePool::connect(&database_url)
+            .await
+            .context("Failed to connect to SQLite database")?;
+
+        // Create tables if they don't exist
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS analysis_steps (
+                id TEXT PRIMARY KEY,
+                repository TEXT NOT NULL,
+                step_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                output_data TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP
+            )
+            "#)
+        .execute(&pool)
+        .await
+        .context("Failed to create database tables")?;
+
+        Ok(Self { 
+            config, 
+            llm_client: LlmClient::new(&config)?,
+            pool 
+        })
     }
 
     /// Analyze a repository and generate knowledge file incrementally

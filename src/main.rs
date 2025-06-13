@@ -85,15 +85,27 @@ async fn run() -> Result<()> {
     match cli.command {
         Commands::Analyze(args) => {
             let config = create_config(&args)?;
+
+            // Set up database connection
+            let database_path = format!("{}/.raidme.db", args.repo_path.display());
+            let database_url = format!("sqlite:{}", database_path);
+            let pool = SqlitePool::connect(&database_url)
+                .await
+                .context("Failed to connect to SQLite database")?;
+
+            // Verify or create tables using migration
+            sqlx::migrate::Migrator::up(&pool, "migrations/0001_initial_setup.sql")
+                .await
+                .context("Failed to apply database migrations")?;
+
             println!("Created config: {:?}", config);
+            println!("Database: {}", database_path);
 
             // Validate config before saving
             config.validate()?;
 
             // Store the config (excluding API key)
             config.store(&args.repo_path)?;
-
-            // let mut analyzer = RepoAnalyzer::new(config).await?;
 
             println!("🔍 Starting repository analysis...");
             println!("📁 Repo: {}", args.repo_path.display());

@@ -127,9 +127,53 @@ impl RepositoryAnalyzer {
         let db = SqlitePool::connect(database_url).await
             .context("Failed to connect to SQLite database")?;
 
-        // Run migrations
-        sqlx::migrate!("./migrations").run(&db).await
-            .context("Failed to run database migrations")?;
+        // Create tables if they don't exist instead of using migrations
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS analysis_steps (
+                id TEXT PRIMARY KEY,
+                step_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                input_data TEXT NOT NULL,
+                output_data TEXT,
+                error_message TEXT,
+                created_at TEXT NOT NULL,
+                completed_at TEXT
+            )
+            "#
+        ).execute(&db).await.context("Failed to create analysis_steps table")?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS knowledge_entries (
+                id TEXT PRIMARY KEY,
+                category TEXT NOT NULL,
+                subcategory TEXT,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                relevance_score REAL NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            "#
+        ).execute(&db).await.context("Failed to create knowledge_entries table")?;
+
+        // Create indexes
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_analysis_steps_status ON analysis_steps(status)"
+        ).execute(&db).await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_analysis_steps_created_at ON analysis_steps(created_at)"
+        ).execute(&db).await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_entries_category ON knowledge_entries(category)"
+        ).execute(&db).await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_entries_relevance ON knowledge_entries(relevance_score DESC)"
+        ).execute(&db).await?;
 
         let llm_client: Box<dyn LLMClient> = match config.llm_provider.as_str() {
             "openai" => {
@@ -588,10 +632,14 @@ impl RepositoryAnalyzer {
         let step_type_str = serde_json::to_string(&step_type)?;
         let status_str = serde_json::to_string(&StepStatus::InProgress)?;
 
-        sqlx::query!(
-            "INSERT INTO analysis_steps (id, step_type, status, input_data, created_at) VALUES (?, ?, ?, ?, ?)",
-            id, step_type_str, status_str, input_data, chrono::Utc::now()
+        sqlx::query(
+            "INSERT INTO analysis_steps (id, step_type, status, input_data, created_at) VALUES ($1, $2, $3, $4, $5)"
         )
+        .bind(id)
+        .bind(step_type_str)
+        .bind(status_str)
+        .bind(input_data)
+        .bind(chrono::Utc::now())
         .execute(&self.db)
         .await?;
 

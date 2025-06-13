@@ -649,10 +649,13 @@ impl RepositoryAnalyzer {
     async fn complete_analysis_step(&self, id: &str, output_data: &str) -> Result<()> {
         let status_str = serde_json::to_string(&StepStatus::Completed)?;
 
-        sqlx::query!(
-            "UPDATE analysis_steps SET status = ?, output_data = ?, completed_at = ? WHERE id = ?",
-            status_str, output_data, chrono::Utc::now(), id
+        sqlx::query(
+            "UPDATE analysis_steps SET status = $1, output_data = $2, completed_at = $3 WHERE id = $4"
         )
+        .bind(status_str)
+        .bind(output_data)
+        .bind(chrono::Utc::now())
+        .bind(id)
         .execute(&self.db)
         .await?;
 
@@ -684,10 +687,17 @@ impl RepositoryAnalyzer {
     }
 
     async fn store_knowledge_entry(&self, entry: &KnowledgeEntry) -> Result<()> {
-        sqlx::query!(
-            "INSERT INTO knowledge_entries (id, category, subcategory, title, content, relevance_score, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            entry.id, entry.category, entry.subcategory, entry.title, entry.content, entry.relevance_score, entry.created_at, entry.updated_at
+        sqlx::query(
+            "INSERT INTO knowledge_entries (id, category, subcategory, title, content, relevance_score, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
         )
+        .bind(&entry.id)
+        .bind(&entry.category)
+        .bind(&entry.subcategory)
+        .bind(&entry.title)
+        .bind(&entry.content)
+        .bind(entry.relevance_score)
+        .bind(entry.created_at)
+        .bind(entry.updated_at)
         .execute(&self.db)
         .await?;
 
@@ -695,7 +705,7 @@ impl RepositoryAnalyzer {
     }
 
     async fn get_current_knowledge(&self) -> Result<String> {
-        let rows = sqlx::query!(
+        let rows = sqlx::query(
             "SELECT category, title, content FROM knowledge_entries ORDER BY relevance_score DESC, created_at ASC"
         )
         .fetch_all(&self.db)

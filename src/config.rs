@@ -1,6 +1,6 @@
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path,PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -57,7 +57,7 @@ pub struct AnalysisConfig {
     /// Directories to exclude from analysis
     pub exclude_dirs: Vec<String>,
 
-    /// Files to exclude from analysis
+    /// Files to exclude from analysisp
     pub exclude_files: Vec<String>,
 
     /// Maximum depth to traverse directories
@@ -173,21 +173,40 @@ impl Config {
         Ok(config_dir.join("raidme").join("config.toml"))
     }
 
-    /// Load configuration from the default location or create a default one
-    pub fn load_or_default() -> Result<Self> {
-        let config_path = Self::default_config_path()?;
+    /// Load configuration from the default location or repo path. Fails if not found.
+    pub fn load<P: AsRef<Path>>(repo_path: P) -> Result<Self> {
+        let repo_path = repo_path.as_ref();
+        let repo_config_path = repo_path.join(".raidme.toml");
 
-        if config_path.exists() {
-            Self::from_file(&config_path)
-        } else {
-            let config = Self::default();
-            // Create the config directory if it doesn't exist
-            if let Some(parent) = config_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            config.to_file(&config_path)?;
-            Ok(config)
+        if repo_config_path.exists() {
+            return Self::from_file(&repo_config_path);
         }
+
+        let config_path = Self::default_config_path()?;
+        if config_path.exists() {
+            return Self::from_file(&config_path);
+        }
+
+        Err(Error::ConfigError("No configuration file found".to_string()))
+    }
+
+    /// Load configuration if it exists, otherwise fall back to default
+    pub fn load_or_default<P: AsRef<Path>>(repo_path: P) -> Result<Self> {
+        match Self::load(repo_path) {
+            Ok(config) => Ok(config),
+            Err(_) => Ok(Self::default()),
+        }
+    }
+
+    /// Store the configuration to the repo-local `.raidme.toml` file,
+    /// excluding the API key from being saved.
+    pub fn store<P: AsRef<Path>>(&self, repo_path: P) -> Result<()> {
+        let repo_path = repo_path.as_ref();
+        let mut clone = self.clone();
+        clone.llm.api_key.clear(); // clear API key before saving
+
+        let config_path = repo_path.join(".raidme.toml");
+        clone.to_file(config_path)
     }
 
     /// Validate the configuration

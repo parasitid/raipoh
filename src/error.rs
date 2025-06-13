@@ -16,6 +16,9 @@ pub enum Error {
     #[error("TOML error: {0}")]
     Toml(#[from] toml::de::Error),
 
+    #[error("Invalid LLM provider: {0}. Use: anthropic, openai, or openrouter")]
+    InvalidProvider(String),
+
     #[error("TOML serialization error: {0}")]
     TomlSer(#[from] toml::ser::Error),
 
@@ -59,8 +62,8 @@ pub enum Error {
     Generic(String),
 }
 
-impl From<rig_core::completion::CompletionError> for Error {
-    fn from(err: rig_core::completion::CompletionError) -> Self {
+impl From<rig::completion::CompletionError> for Error {
+    fn from(err: rig::completion::CompletionError) -> Self {
         Error::Llm(err.to_string())
     }
 }

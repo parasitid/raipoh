@@ -1,8 +1,9 @@
 use clap::{Args, Parser, Subcommand};
 use raidme::{
-    analyzer::RepoAnalyzer,
-    config::Config,
-    llm::{LlmBackend, LlmProvider},
+    Error,
+    // analyzer::RepoAnalyzer,
+    config::{Config,LlmProvider},
+    // llm::{LlmBackend},
     Result,
 };
 use std::path::PathBuf;
@@ -21,8 +22,7 @@ struct Cli {
 enum Commands {
     /// Analyze a repository and generate knowledge documentation
     Analyze(AnalyzeArgs),
-    /// Resume analysis from a previous checkpoint
-    Resume(ResumeArgs),
+
     /// Show analysis status
     Status(StatusArgs),
 }
@@ -33,20 +33,20 @@ struct AnalyzeArgs {
     #[arg(short, long)]
     repo_path: PathBuf,
 
-    /// LLM provider to use (claude, openai, openrouter)
-    #[arg(short, long, default_value = "claude")]
+    /// LLM provider to use (anthropic, openai, openrouter)
+    #[arg(short, long, default_value = "anthropic")]
     provider: String,
 
     /// API key for the LLM provider
     #[arg(short, long)]
     api_key: Option<String>,
 
-    /// Model to use (e.g., claude-3-sonnet, gpt-4, etc.)
+    /// Model to use (e.g., anthropic-3-sonnet, gpt-4, etc.)
     #[arg(short, long)]
     model: Option<String>,
 
     /// Output path for the knowledge file
-    #[arg(short, long, default_value = "ai-knowledge.md")]
+    #[arg(short, long, default_value = "README.ai.md")]
     output: PathBuf,
 
     /// Additional context or instructions for the AI
@@ -56,17 +56,6 @@ struct AnalyzeArgs {
     /// Skip git commits for each step (useful for testing)
     #[arg(long)]
     no_commit: bool,
-}
-
-#[derive(Args)]
-struct ResumeArgs {
-    /// Path to the repository being analyzed
-    #[arg(short, long)]
-    repo_path: PathBuf,
-
-    /// API key for the LLM provider
-    #[arg(short, long)]
-    api_key: Option<String>,
 }
 
 #[derive(Args)]
@@ -85,33 +74,34 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Analyze(args) => {
             let config = create_config(&args)?;
-            let mut analyzer = RepoAnalyzer::new(config).await?;
+            println!("Created config: {:?}", config);
+
+            // Validate config before saving
+            config.validate()?;
+
+            // Store the config in the repo folder (excluding API key)
+            config.store(&args.repo_path)?;
+
+            // let mut analyzer = RepoAnalyzer::new(config).await?;
 
             println!("🔍 Starting repository analysis...");
             println!("📁 Repo: {}", args.repo_path.display());
             println!("🤖 Provider: {}", args.provider);
             println!("📄 Output: {}", args.output.display());
 
-            analyzer.analyze().await?;
+            // analyzer.analyze().await?;
 
             println!("✅ Analysis completed successfully!");
             println!("📄 Knowledge file generated: {}", args.output.display());
         }
 
-        Commands::Resume(args) => {
-            let config = Config::load_from_repo(&args.repo_path)?;
-            let mut analyzer = RepoAnalyzer::from_checkpoint(config).await?;
-
-            println!("🔄 Resuming analysis from checkpoint...");
-            analyzer.resume().await?;
-
-            println!("✅ Analysis resumed and completed!");
-        }
-
         Commands::Status(args) => {
-            let status = RepoAnalyzer::get_status(&args.repo_path)?;
+            let config = Config::load(&args.repo_path)?;
+            println!("Using config: {:?}", config);
+            // let status = RepoAnalyzer::get_status(&args.repo_path)?;
             println!("📊 Analysis Status:");
-            println!("{:#?}", status);
+            // println!("{:#?}", status);
+            println!("dummy");
         }
     }
 
@@ -119,37 +109,43 @@ async fn main() -> Result<()> {
 }
 
 fn create_config(args: &AnalyzeArgs) -> Result<Config> {
-    let provider = match args.provider.as_str() {
-        "claude" => LlmProvider::Claude,
-        "openai" => LlmProvider::OpenAI,
-        "openrouter" => LlmProvider::OpenRouter,
-        _ => return Err("Invalid LLM provider. Use: claude, openai, or openrouter".into()),
-    };
+    // Load the base config from repo or global file (or default)
+    let mut config = Config::load_or_default(&args.repo_path)?;
 
-    let api_key = args.api_key.clone()
+    // Override LLM provider if passed in CLI args
+    if !args.provider.is_empty() {
+        config.llm.provider = match args.provider.as_str() {
+            "anthropic" => LlmProvider::Anthropic,
+            "openai" => LlmProvider::OpenAI,
+            "openrouter" => LlmProvider::OpenRouter,
+            _ => return Err(Error::InvalidProvider(args.provider.clone())),
+        };
+    }
+
+    // Override api_key with CLI or env vars or keep existing
+    config.llm.api_key = args.api_key.clone()
         .or_else(|| std::env::var("RAIDME_API_KEY").ok())
-        .or_else(|| match provider {
-            LlmProvider::Claude => std::env::var("CLAUDE_API_KEY").ok(),
+        .or_else(|| match config.llm.provider {
+            LlmProvider::Anthropic => std::env::var("ANTHROPIC_API_KEY").ok(),
             LlmProvider::OpenAI => std::env::var("OPENAI_API_KEY").ok(),
             LlmProvider::OpenRouter => std::env::var("OPENROUTER_API_KEY").ok(),
+            LlmProvider::Ollama => None,
         })
-        .ok_or("API key not provided. Use --api-key or set environment variable")?;
+        .unwrap_or_else(|| config.llm.api_key.clone());
 
-    let model = args.model.clone().unwrap_or_else(|| {
-        match provider {
-            LlmProvider::Claude => "claude-3-sonnet-20240229".to_string(),
+    // Override model if CLI arg present, else keep config or set default
+    config.llm.model = args.model.clone().unwrap_or_else(|| {
+        match config.llm.provider {
+            LlmProvider::Anthropic => "claude-3-sonnet-20240229".to_string(),
             LlmProvider::OpenAI => "gpt-4-turbo-preview".to_string(),
             LlmProvider::OpenRouter => "anthropic/claude-3-sonnet".to_string(),
+            LlmProvider::Ollama => "ollama-default".to_string(),
         }
     });
 
-    Ok(Config {
-        repo_path: args.repo_path.clone(),
-        output_path: args.output.clone(),
-        llm_provider: provider,
-        api_key,
-        model,
-        context: args.context.clone(),
-        commit_each_step: !args.no_commit,
-    })
+    // You can override other parts similarly, e.g. context, commit_each_step, etc.
+
+    config.validate()?;
+
+    Ok(config)
 }

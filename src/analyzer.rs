@@ -56,6 +56,7 @@ pub struct RepositoryAnalyzer {
     config: Config,
     db: SqlitePool,
     llm_client: Box<dyn LLMClient>,
+    repo_path: PathBuf,
 }
 
 #[async_trait::async_trait]

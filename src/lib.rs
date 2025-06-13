@@ -1,4 +1,3 @@
-#[cfg(feature = "analyzer")]
 mod analyzer;
 pub mod config;
 pub mod error;
@@ -7,7 +6,6 @@ pub mod error;
 pub mod llm;
 // pub mod template;
 
-#[cfg(feature = "analyzer")] 
 pub use analyzer::RepositoryAnalyzer;
 pub use config::{Config, LlmProvider};
 pub use error::{Error, Result};

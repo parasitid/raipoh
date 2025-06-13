@@ -2,6 +2,7 @@ use crate::config::{Config, LlmProvider};
 use crate::error::Result;
 use rig_core::completion::{CompletionModel, Prompt};
 use rig_core::providers::{anthropic, openai};
+use sqlx::SqlitePool;
 
 /// Unified LLM client that abstracts over different providers
 pub struct LlmClient {

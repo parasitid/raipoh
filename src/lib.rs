@@ -14,6 +14,7 @@ pub use error::{Error, Result};
 pub use llm::LlmClient;
 
 use std::path::Path;
+use sqlx::SqlitePool;
 use tracing::info;
 
 /// Main API for the raidme library
@@ -25,7 +26,7 @@ pub struct Raidme {
 
 impl Raidme {
     /// Create a new Raidme instance with the given configuration
-    pub fn new(config: Config) -> Result<Self> {
+    pub async fn new(config: Config) -> Result<Self> {
         // Initialize database connection
         let database_url = format!("sqlite:{}.db", config.git.repository.name);
         let pool = SqlitePool::connect(&database_url)

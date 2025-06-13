@@ -90,7 +90,7 @@ impl LLMClient for OpenAIClient {
 }
 
 impl RepositoryAnalyzer {
-    pub async fn new(config: Config) -> Result<Self> {
+    pub async fn new(config: Config, repo_path: PathBuf, db: SqlitePool) -> Result<Self> {
         let llm_client: Box<dyn LLMClient> = match config.llm_provider.as_str() {
             "openai" => {
                 let client = openai::Client::new(&config.api_key);
@@ -108,6 +108,7 @@ impl RepositoryAnalyzer {
             config,
             db,
             llm_client,
+            repo_path,
         })
     }
 

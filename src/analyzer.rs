@@ -660,10 +660,10 @@ impl RepositoryAnalyzer {
     }
 
     async fn get_last_completed_step(&self) -> Result<Option<AnalysisStep>> {
-        let row = sqlx::query!(
-            "SELECT * FROM analysis_steps WHERE status = ? ORDER BY created_at DESC LIMIT 1",
-            serde_json::to_string(&StepStatus::Completed)?
+        let row = sqlx::query(
+            "SELECT * FROM analysis_steps WHERE status = $1 ORDER BY created_at DESC LIMIT 1"
         )
+        .bind(serde_json::to_string(&StepStatus::Completed)?)
         .fetch_optional(&self.db)
         .await?;
 
@@ -817,38 +817,6 @@ The goal is to create documentation that enables any AI coding assistant to unde
     }
 }
 
-// Migration SQL for the database schema
-pub const MIGRATIONS: &str = r#"
--- Create analysis_steps table
-CREATE TABLE IF NOT EXISTS analysis_steps (
-    id TEXT PRIMARY KEY,
-    step_type TEXT NOT NULL,
-    status TEXT NOT NULL,
-    input_data TEXT NOT NULL,
-    output_data TEXT,
-    error_message TEXT,
-    created_at TEXT NOT NULL,
-    completed_at TEXT
-);
-
--- Create knowledge_entries table
-CREATE TABLE IF NOT EXISTS knowledge_entries (
-    id TEXT PRIMARY KEY,
-    category TEXT NOT NULL,
-    subcategory TEXT,
-    title TEXT NOT NULL,
-    content TEXT NOT NULL,
-    relevance_score REAL NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
--- Create indexes for better performance
-CREATE INDEX IF NOT EXISTS idx_analysis_steps_status ON analysis_steps(status);
-CREATE INDEX IF NOT EXISTS idx_analysis_steps_created_at ON analysis_steps(created_at);
-CREATE INDEX IF NOT EXISTS idx_knowledge_entries_category ON knowledge_entries(category);
-CREATE INDEX IF NOT EXISTS idx_knowledge_entries_relevance ON knowledge_entries(relevance_score DESC);
-"#;
 
 #[cfg(test)]
 mod tests {

@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
 use std::fs;
-use std::collections::HashMap;
 use anyhow::{Result, Context};
 use serde::{Deserialize, Serialize};
 use sqlx::{SqlitePool, Row};

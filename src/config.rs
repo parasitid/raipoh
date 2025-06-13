@@ -194,8 +194,33 @@ impl Config {
     pub fn load_or_default<P: AsRef<Path>>(repo_path: P) -> Result<Self> {
         match Self::load(repo_path) {
             Ok(config) => Ok(config),
-            Err(_) => Ok(Self::default()),
+            Err(e) if e.is_file_not_found() => Ok(Self::default()),
+            Err(e) => Err(e),
         }
+    }
+
+    /// Stores the config while preserving existing non-sensitive values
+    pub fn store_preserving<P: AsRef<Path>>(&self, repo_path: P) -> Result<()> {
+        let repo_path = repo_path.as_ref();
+        let mut new_config = self.clone();
+        
+        // Try to load existing config to preserve values
+        if let Ok(existing) = Self::load(repo_path) {
+            // Preserve non-sensitive fields from existing config
+            new_config.llm.base_url = existing.llm.base_url;
+            new_config.llm.max_tokens = existing.llm.max_tokens;
+            new_config.llm.temperature = existing.llm.temperature;
+            
+            // Preserve analysis config
+            new_config.analysis.exclude_dirs = existing.analysis.exclude_dirs;
+            new_config.analysis.exclude_files = existing.analysis.exclude_files;
+            new_config.analysis.include_extensions = existing.analysis.include_extensions;
+        }
+
+        // Always clear sensitive fields
+        new_config.llm.api_key.clear();
+
+        new_config.to_file(repo_path.join(".raidme.toml"))
     }
 
     /// Store the configuration to the repo-local `.raidme.toml` file,

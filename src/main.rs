@@ -79,8 +79,8 @@ async fn main() -> Result<()> {
             // Validate config before saving
             config.validate()?;
 
-            // Store the config in the repo folder (excluding API key)
-            config.store(&args.repo_path)?;
+            // Store the config preserving existing values (excluding API key)
+            config.store_preserving(&args.repo_path)?;
 
             // let mut analyzer = RepoAnalyzer::new(config).await?;
 

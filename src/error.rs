@@ -76,3 +76,9 @@ impl From<walkdir::Error> for Error {
         ))
     }
 }
+
+impl Error {
+    pub fn is_file_not_found(&self) -> bool {
+        matches!(self, Error::Io(ref e) if e.kind() == std::io::ErrorKind::NotFound)
+    }
+}

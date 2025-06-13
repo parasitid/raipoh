@@ -1,14 +1,16 @@
-use std::path::{Path, PathBuf};
+use std::path::{PathBuf};
 use std::fs;
 use anyhow::{Result, Context};
 use serde::{Deserialize, Serialize};
-use sqlx::{SqlitePool, Row};
+use sqlx::{SqlitePool};
 use tokio::time::{sleep, Duration};
-use rig::{completion::Prompt, providers::openai};
 
 use raidme::{
     config::{Config},
+    llm::LlmClient,
 };
+
+use crate::LlmClient;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnalysisStep {
@@ -55,55 +57,12 @@ pub struct KnowledgeEntry {
 pub struct RepositoryAnalyzer {
     config: Config,
     db: SqlitePool,
-    llm_client: Box<dyn LLMClient>,
+    llm_client: Box<dyn LlmClient>,
     repo_path: PathBuf,
 }
 
-#[async_trait::async_trait]
-pub trait LLMClient: Send + Sync {
-    async fn generate_completion(&self, prompt: &str, context: &str) -> Result<String>;
-}
-
-pub struct OpenAIClient {
-    client: openai::Client,
-    model: String,
-    max_tokens: u32,
-    temperature: f32,
-}
-
-#[async_trait::async_trait]
-impl LLMClient for OpenAIClient {
-    async fn generate_completion(&self, prompt: &str, context: &str) -> Result<String> {
-        let full_prompt = format!("{}\n\nContext:\n{}", prompt, context);
-
-        let completion = self.client
-            .completion(&self.model)
-            .prompt(&full_prompt)
-            .temperature(self.temperature)
-            .max_tokens(self.max_tokens)
-            .send()
-            .await
-            .context("Failed to get LLM completion")?;
-
-        Ok(completion.choice.message.content)
-    }
-}
-
 impl RepositoryAnalyzer {
-    pub async fn new(config: Config, repo_path: PathBuf, db: SqlitePool) -> Result<Self> {
-        let llm_client: Box<dyn LLMClient> = match config.llm_provider.as_str() {
-            "openai" => {
-                let client = openai::Client::new(&config.api_key);
-                Box::new(OpenAIClient {
-                    client,
-                    model: config.llm_model.clone(),
-                    max_tokens: config.max_tokens,
-                    temperature: config.temperature,
-                })
-            }
-            _ => return Err(anyhow::anyhow!("Unsupported LLM provider: {}", config.llm_provider)),
-        };
-
+    pub async fn new(config: Config, db: SqlitePool, llm_client: LlmClient, repo_path: PathBuf) -> Result<Self> {
         Ok(Self {
             config,
             db,
@@ -197,29 +156,29 @@ impl RepositoryAnalyzer {
 
         let mut global_info = String::new();
 
-        // Read README files
-        for readme_name in &["README.md", "README.rst", "README.txt", "README"] {
-            let readme_path = self.config.repository_path.join(readme_name);
-            if readme_path.exists() {
-                let content = fs::read_to_string(&readme_path)
-                    .context(format!("Failed to read {:?}", readme_path))?;
-                global_info.push_str(&format!("=== {} ===\n{}\n\n", readme_name, content));
-            }
-        }
+        // // Read README files
+        // for readme_name in &["README.md", "README.rst", "README.txt", "README"] {
+        //     let readme_path = self.config.repository_path.join(readme_name);
+        //     if readme_path.exists() {
+        //         let content = fs::read_to_string(&readme_path)
+        //             .context(format!("Failed to read {:?}", readme_path))?;
+        //         global_info.push_str(&format!("=== {} ===\n{}\n\n", readme_name, content));
+        //     }
+        // }
 
-        // Read package/project files
-        for config_file in &["Cargo.toml", "package.json", "pyproject.toml", "pom.xml", "go.mod"] {
-            let config_path = self.config.repository_path.join(config_file);
-            if config_path.exists() {
-                let content = fs::read_to_string(&config_path)
-                    .context(format!("Failed to read {:?}", config_path))?;
-                global_info.push_str(&format!("=== {} ===\n{}\n\n", config_file, content));
-            }
-        }
+        // // Read package/project files
+        // for config_file in &["Cargo.toml", "package.json", "pyproject.toml", "pom.xml", "go.mod"] {
+        //     let config_path = self.config.repository_path.join(config_file);
+        //     if config_path.exists() {
+        //         let content = fs::read_to_string(&config_path)
+        //             .context(format!("Failed to read {:?}", config_path))?;
+        //         global_info.push_str(&format!("=== {} ===\n{}\n\n", config_file, content));
+        //     }
+        // }
 
-        // Get directory structure overview
-        let dir_structure = self.get_directory_structure(&self.config.repository_path, 2)?;
-        global_info.push_str(&format!("=== Directory Structure (2 levels) ===\n{}\n\n", dir_structure));
+        // // Get directory structure overview
+        // let dir_structure = self.get_directory_structure(&self.config.repository_path, 2)?;
+        // global_info.push_str(&format!("=== Directory Structure (2 levels) ===\n{}\n\n", dir_structure));
 
         let prompt = self.create_global_analysis_prompt();
         let analysis = self.call_llm_with_retry(&prompt, &global_info).await?;
@@ -243,148 +202,148 @@ impl RepositoryAnalyzer {
         Ok(())
     }
 
-    async fn analyze_documentation(&self) -> Result<()> {
-        println!("Analyzing documentation...");
+    // async fn analyze_documentation(&self) -> Result<()> {
+    //     println!("Analyzing documentation...");
 
-        let step_id = uuid::Uuid::new_v4().to_string();
-        self.create_analysis_step(&step_id, StepType::Documentation, "Documentation analysis").await?;
+    //     let step_id = uuid::Uuid::new_v4().to_string();
+    //     self.create_analysis_step(&step_id, StepType::Documentation, "Documentation analysis").await?;
 
-        let docs_dirs = vec!["docs", "doc", "documentation", "wiki"];
-        let mut docs_content = String::new();
+    //     let docs_dirs = vec!["docs", "doc", "documentation", "wiki"];
+    //     let mut docs_content = String::new();
 
-        for docs_dir in docs_dirs {
-            let docs_path = self.config.repository_path.join(docs_dir);
-            if docs_path.exists() && docs_path.is_dir() {
-                let content = self.read_documentation_recursive(&docs_path)?;
-                docs_content.push_str(&format!("=== {} ===\n{}\n\n", docs_dir, content));
-            }
-        }
+    //     for docs_dir in docs_dirs {
+    //         let docs_path = self.config.repository_path.join(docs_dir);
+    //         if docs_path.exists() && docs_path.is_dir() {
+    //             let content = self.read_documentation_recursive(&docs_path)?;
+    //             docs_content.push_str(&format!("=== {} ===\n{}\n\n", docs_dir, content));
+    //         }
+    //     }
 
-        if !docs_content.is_empty() {
-            let current_knowledge = self.get_current_knowledge().await?;
-            let prompt = self.create_documentation_analysis_prompt();
-            let analysis = self.call_llm_with_retry(&prompt, &format!("{}\n\nExisting Knowledge:\n{}", docs_content, current_knowledge)).await?;
+    //     if !docs_content.is_empty() {
+    //         let current_knowledge = self.get_current_knowledge().await?;
+    //         let prompt = self.create_documentation_analysis_prompt();
+    //         let analysis = self.call_llm_with_retry(&prompt, &format!("{}\n\nExisting Knowledge:\n{}", docs_content, current_knowledge)).await?;
 
-            let knowledge_entry = KnowledgeEntry {
-                id: uuid::Uuid::new_v4().to_string(),
-                category: "documentation".to_string(),
-                subcategory: None,
-                title: "Documentation Analysis".to_string(),
-                content: analysis.clone(),
-                relevance_score: 0.9,
-                created_at: chrono::Utc::now(),
-                updated_at: chrono::Utc::now(),
-            };
+    //         let knowledge_entry = KnowledgeEntry {
+    //             id: uuid::Uuid::new_v4().to_string(),
+    //             category: "documentation".to_string(),
+    //             subcategory: None,
+    //             title: "Documentation Analysis".to_string(),
+    //             content: analysis.clone(),
+    //             relevance_score: 0.9,
+    //             created_at: chrono::Utc::now(),
+    //             updated_at: chrono::Utc::now(),
+    //         };
 
-            self.store_knowledge_entry(&knowledge_entry).await?;
-            self.complete_analysis_step(&step_id, &analysis).await?;
-        } else {
-            self.complete_analysis_step(&step_id, "No documentation found").await?;
-        }
+    //         self.store_knowledge_entry(&knowledge_entry).await?;
+    //         self.complete_analysis_step(&step_id, &analysis).await?;
+    //     } else {
+    //         self.complete_analysis_step(&step_id, "No documentation found").await?;
+    //     }
 
-        println!("Documentation analysis completed");
-        Ok(())
-    }
+    //     println!("Documentation analysis completed");
+    //     Ok(())
+    // }
 
-    async fn analyze_directory_structure(&self) -> Result<()> {
-        println!("Analyzing directory structure...");
+    // async fn analyze_directory_structure(&self) -> Result<()> {
+    //     println!("Analyzing directory structure...");
 
-        let step_id = uuid::Uuid::new_v4().to_string();
-        self.create_analysis_step(&step_id, StepType::DirectoryStructure, "Directory structure analysis").await?;
+    //     let step_id = uuid::Uuid::new_v4().to_string();
+    //     self.create_analysis_step(&step_id, StepType::DirectoryStructure, "Directory structure analysis").await?;
 
-        let full_structure = self.get_directory_structure(&self.config.repository_path, 10)?;
-        let current_knowledge = self.get_current_knowledge().await?;
+    //     let full_structure = self.get_directory_structure(&self.config.repository_path, 10)?;
+    //     let current_knowledge = self.get_current_knowledge().await?;
 
-        let prompt = self.create_directory_analysis_prompt();
-        let analysis = self.call_llm_with_retry(&prompt, &format!("Directory Structure:\n{}\n\nExisting Knowledge:\n{}", full_structure, current_knowledge)).await?;
+    //     let prompt = self.create_directory_analysis_prompt();
+    //     let analysis = self.call_llm_with_retry(&prompt, &format!("Directory Structure:\n{}\n\nExisting Knowledge:\n{}", full_structure, current_knowledge)).await?;
 
-        let knowledge_entry = KnowledgeEntry {
-            id: uuid::Uuid::new_v4().to_string(),
-            category: "structure".to_string(),
-            subcategory: None,
-            title: "Directory Structure Analysis".to_string(),
-            content: analysis.clone(),
-            relevance_score: 0.8,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        };
+    //     let knowledge_entry = KnowledgeEntry {
+    //         id: uuid::Uuid::new_v4().to_string(),
+    //         category: "structure".to_string(),
+    //         subcategory: None,
+    //         title: "Directory Structure Analysis".to_string(),
+    //         content: analysis.clone(),
+    //         relevance_score: 0.8,
+    //         created_at: chrono::Utc::now(),
+    //         updated_at: chrono::Utc::now(),
+    //     };
 
-        self.store_knowledge_entry(&knowledge_entry).await?;
-        self.complete_analysis_step(&step_id, &analysis).await?;
+    //     self.store_knowledge_entry(&knowledge_entry).await?;
+    //     self.complete_analysis_step(&step_id, &analysis).await?;
 
-        println!("Directory structure analysis completed");
-        Ok(())
-    }
+    //     println!("Directory structure analysis completed");
+    //     Ok(())
+    // }
 
-    async fn analyze_files(&self) -> Result<()> {
-        println!("Analyzing key files...");
+    // async fn analyze_files(&self) -> Result<()> {
+    //     println!("Analyzing key files...");
 
-        let step_id = uuid::Uuid::new_v4().to_string();
-        self.create_analysis_step(&step_id, StepType::FileAnalysis, "File analysis").await?;
+    //     let step_id = uuid::Uuid::new_v4().to_string();
+    //     self.create_analysis_step(&step_id, StepType::FileAnalysis, "File analysis").await?;
 
-        let key_files = self.identify_key_files()?;
-        let current_knowledge = self.get_current_knowledge().await?;
+    //     let key_files = self.identify_key_files()?;
+    //     let current_knowledge = self.get_current_knowledge().await?;
 
-        for file_path in key_files {
-            if let Ok(content) = fs::read_to_string(&file_path) {
-                // Skip very large files
-                if content.len() > 50000 {
-                    continue;
-                }
+    //     for file_path in key_files {
+    //         if let Ok(content) = fs::read_to_string(&file_path) {
+    //             // Skip very large files
+    //             if content.len() > 50000 {
+    //                 continue;
+    //             }
 
-                let relative_path = file_path.strip_prefix(&self.config.repository_path)
-                    .unwrap_or(&file_path);
+    //             let relative_path = file_path.strip_prefix(&self.config.repository_path)
+    //                 .unwrap_or(&file_path);
 
-                let prompt = self.create_file_analysis_prompt(&relative_path.to_string_lossy());
-                let analysis = self.call_llm_with_retry(&prompt, &format!("File Content:\n{}\n\nExisting Knowledge:\n{}", content, current_knowledge)).await?;
+    //             let prompt = self.create_file_analysis_prompt(&relative_path.to_string_lossy());
+    //             let analysis = self.call_llm_with_retry(&prompt, &format!("File Content:\n{}\n\nExisting Knowledge:\n{}", content, current_knowledge)).await?;
 
-                let knowledge_entry = KnowledgeEntry {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    category: "file".to_string(),
-                    subcategory: Some(relative_path.to_string_lossy().to_string()),
-                    title: format!("Analysis of {}", relative_path.to_string_lossy()),
-                    content: analysis,
-                    relevance_score: 0.7,
-                    created_at: chrono::Utc::now(),
-                    updated_at: chrono::Utc::now(),
-                };
+    //             let knowledge_entry = KnowledgeEntry {
+    //                 id: uuid::Uuid::new_v4().to_string(),
+    //                 category: "file".to_string(),
+    //                 subcategory: Some(relative_path.to_string_lossy().to_string()),
+    //                 title: format!("Analysis of {}", relative_path.to_string_lossy()),
+    //                 content: analysis,
+    //                 relevance_score: 0.7,
+    //                 created_at: chrono::Utc::now(),
+    //                 updated_at: chrono::Utc::now(),
+    //             };
 
-                self.store_knowledge_entry(&knowledge_entry).await?;
-            }
-        }
+    //             self.store_knowledge_entry(&knowledge_entry).await?;
+    //         }
+    //     }
 
-        self.complete_analysis_step(&step_id, "File analysis completed").await?;
-        println!("File analysis completed");
-        Ok(())
-    }
+    //     self.complete_analysis_step(&step_id, "File analysis completed").await?;
+    //     println!("File analysis completed");
+    //     Ok(())
+    // }
 
-    async fn generate_architecture_diagrams(&self) -> Result<()> {
-        println!("Generating architecture diagrams...");
+    // async fn generate_architecture_diagrams(&self) -> Result<()> {
+    //     println!("Generating architecture diagrams...");
 
-        let step_id = uuid::Uuid::new_v4().to_string();
-        self.create_analysis_step(&step_id, StepType::ArchitectureDiagram, "Architecture diagram generation").await?;
+    //     let step_id = uuid::Uuid::new_v4().to_string();
+    //     self.create_analysis_step(&step_id, StepType::ArchitectureDiagram, "Architecture diagram generation").await?;
 
-        let current_knowledge = self.get_current_knowledge().await?;
-        let prompt = self.create_architecture_prompt();
-        let diagrams = self.call_llm_with_retry(&prompt, &current_knowledge).await?;
+    //     let current_knowledge = self.get_current_knowledge().await?;
+    //     let prompt = self.create_architecture_prompt();
+    //     let diagrams = self.call_llm_with_retry(&prompt, &current_knowledge).await?;
 
-        let knowledge_entry = KnowledgeEntry {
-            id: uuid::Uuid::new_v4().to_string(),
-            category: "architecture".to_string(),
-            subcategory: None,
-            title: "Architecture Diagrams".to_string(),
-            content: diagrams.clone(),
-            relevance_score: 0.9,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        };
+    //     let knowledge_entry = KnowledgeEntry {
+    //         id: uuid::Uuid::new_v4().to_string(),
+    //         category: "architecture".to_string(),
+    //         subcategory: None,
+    //         title: "Architecture Diagrams".to_string(),
+    //         content: diagrams.clone(),
+    //         relevance_score: 0.9,
+    //         created_at: chrono::Utc::now(),
+    //         updated_at: chrono::Utc::now(),
+    //     };
 
-        self.store_knowledge_entry(&knowledge_entry).await?;
-        self.complete_analysis_step(&step_id, &diagrams).await?;
+    //     self.store_knowledge_entry(&knowledge_entry).await?;
+    //     self.complete_analysis_step(&step_id, &diagrams).await?;
 
-        println!("Architecture diagrams generated");
-        Ok(())
-    }
+    //     println!("Architecture diagrams generated");
+    //     Ok(())
+    // }
 
     async fn generate_final_readme(&self) -> Result<()> {
         println!("Generating final README.ai.md...");
@@ -427,121 +386,121 @@ impl RepositoryAnalyzer {
         Err(last_error.unwrap())
     }
 
-    fn get_directory_structure(&self, path: &Path, max_depth: usize) -> Result<String> {
-        let mut result = String::new();
-        self.build_tree_string(path, &mut result, "", max_depth, 0)?;
-        Ok(result)
-    }
+    // fn get_directory_structure(&self, path: &Path, max_depth: usize) -> Result<String> {
+    //     let mut result = String::new();
+    //     self.build_tree_string(path, &mut result, "", max_depth, 0)?;
+    //     Ok(result)
+    // }
 
-    fn build_tree_string(&self, path: &Path, result: &mut String, prefix: &str, max_depth: usize, current_depth: usize) -> Result<()> {
-        if current_depth >= max_depth {
-            return Ok(());
-        }
+    // fn build_tree_string(&self, path: &Path, result: &mut String, prefix: &str, max_depth: usize, current_depth: usize) -> Result<()> {
+    //     if current_depth >= max_depth {
+    //         return Ok(());
+    //     }
 
-        let mut entries: Vec<_> = fs::read_dir(path)?
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| {
-                if let Some(name) = entry.file_name().to_str() {
-                    !self.should_ignore(name)
-                } else {
-                    false
-                }
-            })
-            .collect();
+    //     let mut entries: Vec<_> = fs::read_dir(path)?
+    //         .filter_map(|entry| entry.ok())
+    //         .filter(|entry| {
+    //             if let Some(name) = entry.file_name().to_str() {
+    //                 !self.should_ignore(name)
+    //             } else {
+    //                 false
+    //             }
+    //         })
+    //         .collect();
 
-        entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+    //     entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
 
-        for (i, entry) in entries.iter().enumerate() {
-            let is_last = i == entries.len() - 1;
-            let entry_prefix = if is_last { "└── " } else { "├── " };
-            let next_prefix = if is_last { "    " } else { "│   " };
+    //     for (i, entry) in entries.iter().enumerate() {
+    //         let is_last = i == entries.len() - 1;
+    //         let entry_prefix = if is_last { "└── " } else { "├── " };
+    //         let next_prefix = if is_last { "    " } else { "│   " };
 
-            result.push_str(&format!("{}{}{}\n", prefix, entry_prefix, entry.file_name().to_string_lossy()));
+    //         result.push_str(&format!("{}{}{}\n", prefix, entry_prefix, entry.file_name().to_string_lossy()));
 
-            if entry.path().is_dir() {
-                self.build_tree_string(
-                    &entry.path(),
-                    result,
-                    &format!("{}{}", prefix, next_prefix),
-                    max_depth,
-                    current_depth + 1
-                )?;
-            }
-        }
+    //         if entry.path().is_dir() {
+    //             self.build_tree_string(
+    //                 &entry.path(),
+    //                 result,
+    //                 &format!("{}{}", prefix, next_prefix),
+    //                 max_depth,
+    //                 current_depth + 1
+    //             )?;
+    //         }
+    //     }
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
-    fn should_ignore(&self, name: &str) -> bool {
-        self.config.ignore_patterns.iter().any(|pattern| {
-            if pattern.contains('*') {
-                // Simple glob matching
-                let pattern = pattern.replace("*", "");
-                name.contains(&pattern)
-            } else {
-                name == pattern
-            }
-        })
-    }
+    // fn should_ignore(&self, name: &str) -> bool {
+    //     self.config.ignore_patterns.iter().any(|pattern| {
+    //         if pattern.contains('*') {
+    //             // Simple glob matching
+    //             let pattern = pattern.replace("*", "");
+    //             name.contains(&pattern)
+    //         } else {
+    //             name == pattern
+    //         }
+    //     })
+    // }
 
-    fn identify_key_files(&self) -> Result<Vec<PathBuf>> {
-        let mut key_files = Vec::new();
+    // fn identify_key_files(&self) -> Result<Vec<PathBuf>> {
+    //     let mut key_files = Vec::new();
 
-        // Common important files
-        let important_patterns = vec![
-            "main.rs", "lib.rs", "mod.rs",
-            "main.py", "__init__.py",
-            "index.js", "app.js", "server.js",
-            "Main.java", "Application.java",
-            "main.go",
-            "Dockerfile", "docker-compose.yml",
-            "Makefile", "CMakeLists.txt",
-        ];
+    //     // Common important files
+    //     let important_patterns = vec![
+    //         "main.rs", "lib.rs", "mod.rs",
+    //         "main.py", "__init__.py",
+    //         "index.js", "app.js", "server.js",
+    //         "Main.java", "Application.java",
+    //         "main.go",
+    //         "Dockerfile", "docker-compose.yml",
+    //         "Makefile", "CMakeLists.txt",
+    //     ];
 
-        self.find_files_recursive(&self.config.repository_path, &important_patterns, &mut key_files)?;
+    //     self.find_files_recursive(&self.config.repository_path, &important_patterns, &mut key_files)?;
 
-        Ok(key_files)
-    }
+    //     Ok(key_files)
+    // }
 
-    fn find_files_recursive(&self, dir: &Path, patterns: &[&str], results: &mut Vec<PathBuf>) -> Result<()> {
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
+    // fn find_files_recursive(&self, dir: &Path, patterns: &[&str], results: &mut Vec<PathBuf>) -> Result<()> {
+    //     for entry in fs::read_dir(dir)? {
+    //         let entry = entry?;
+    //         let path = entry.path();
 
-            if path.is_dir() {
-                if !self.should_ignore(&entry.file_name().to_string_lossy()) {
-                    self.find_files_recursive(&path, patterns, results)?;
-                }
-            } else if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                if patterns.iter().any(|&pattern| filename.contains(pattern)) {
-                    results.push(path);
-                }
-            }
-        }
-        Ok(())
-    }
+    //         if path.is_dir() {
+    //             if !self.should_ignore(&entry.file_name().to_string_lossy()) {
+    //                 self.find_files_recursive(&path, patterns, results)?;
+    //             }
+    //         } else if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+    //             if patterns.iter().any(|&pattern| filename.contains(pattern)) {
+    //                 results.push(path);
+    //             }
+    //         }
+    //     }
+    //     Ok(())
+    // }
 
-    fn read_documentation_recursive(&self, dir: &Path) -> Result<String> {
-        let mut content = String::new();
+    // fn read_documentation_recursive(&self, dir: &Path) -> Result<String> {
+    //     let mut content = String::new();
 
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
+    //     for entry in fs::read_dir(dir)? {
+    //         let entry = entry?;
+    //         let path = entry.path();
 
-            if path.is_file() {
-                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    if matches!(ext, "md" | "rst" | "txt" | "adoc") {
-                        let file_content = fs::read_to_string(&path)?;
-                        content.push_str(&format!("=== {} ===\n{}\n\n", path.file_name().unwrap().to_string_lossy(), file_content));
-                    }
-                }
-            } else if path.is_dir() && !self.should_ignore(&entry.file_name().to_string_lossy()) {
-                content.push_str(&self.read_documentation_recursive(&path)?);
-            }
-        }
+    //         if path.is_file() {
+    //             if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+    //                 if matches!(ext, "md" | "rst" | "txt" | "adoc") {
+    //                     let file_content = fs::read_to_string(&path)?;
+    //                     content.push_str(&format!("=== {} ===\n{}\n\n", path.file_name().unwrap().to_string_lossy(), file_content));
+    //                 }
+    //             }
+    //         } else if path.is_dir() && !self.should_ignore(&entry.file_name().to_string_lossy()) {
+    //             content.push_str(&self.read_documentation_recursive(&path)?);
+    //         }
+    //     }
 
-        Ok(content)
-    }
+    //     Ok(content)
+    // }
 
     // Database operations
 

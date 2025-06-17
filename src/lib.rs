@@ -13,104 +13,59 @@ pub use error::{Error, Result};
 // pub use git::GitRepository;
 pub use llm::LlmClient;
 
-use std::path::Path;
-use sqlx::SqlitePool;
-use tracing::info;
-
+use std::path::{Path,PathBuf};
+use sqlx::{sqlite::SqlitePool, migrate::Migrator};
+//
 /// Main API for the raidme library
 pub struct Raidme {
     config: Config,
     llm_client: LlmClient,
-    pool: SqlitePool,
+    db: SqlitePool,
+}
+
+static MIGRATOR: Migrator = sqlx::migrate!(); // <- macro looks for ./migrations/
+
+async fn run_migrations(pool: &SqlitePool) -> Result<()> {
+    MIGRATOR.run(pool).await.map_err(Error::Migrate)
 }
 
 impl Raidme {
     /// Create a new Raidme instance with the given configuration
-    pub async fn new(config: Config) -> Result<Self> {
-        // Initialize database connection
-        let database_url = format!("sqlite:{}.db", config.git.repository.name);
-        let pool = SqlitePool::connect(&database_url)
-            .await
-            .with_context(|| "Failed to connect to SQLite database")?;
+    pub async fn new(repo_path: PathBuf, config: Config) -> Result<Self> {
+        // // Initialize database connection
+            // Set up database connection
+            let database_path = format!("{}/.raidme.db", repo_path.display());
+            let database_url = format!("sqlite:{}", database_path);
+            let db = SqlitePool::connect(&database_url)
+                .await
+                .map_err(Error::Sqlx)?;
 
-        // Create tables if they don't exist
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS analysis_steps (
-                id TEXT PRIMARY KEY,
-                repository TEXT NOT NULL,
-                step_type TEXT NOT NULL,
-                status TEXT NOT NULL,
-                output_data TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                completed_at TIMESTAMP
-            )
-            "#)
-        .execute(&pool)
-        .await
-        .context("Failed to create database tables")?;
 
-        Ok(Self { 
-            config, 
-            llm_client: LlmClient::new(&config)?,
-            pool 
-        })
+            // Verify or create tables using migration
+           run_migrations(&db).await?;
+            println!("Created config: {:?}", config);
+            println!("Database: {}", database_path);
+
+            // Validate config before saving
+            config.validate()?;
+
+            // Store the config (excluding API key)
+            config.store(&repo_path)?;
+
+            let llm_client = LlmClient::new(&config)?;
+            Ok(Self {
+                    config,
+                    llm_client,
+                    db
+            })
     }
 
-    /// Analyze a repository and generate knowledge file incrementally
-    pub async fn analyze_repository<P: AsRef<Path>>(
-        &self,
-        repo_path: P,
-        output_file: Option<&str>,
-    ) -> Result<()> {
-        let repo_path = repo_path.as_ref();
-        info!("Starting analysis of repository: {}", repo_path.display());
-        info!("Using config: {:?}", self.config);
-        // let git_repo = GitRepository::open(repo_path)?;
-        // let analyzer = RepositoryAnalyzer::new(repo_path, &self.config)?;
-        // let generator = KnowledgeGenerator::new(&self.llm_client, &self.config);
-
-        // Step 1: Analyze basic repository structure
-        info!("Step 1: Analyzing basic repository structure");
-        // let basic_info = analyzer.analyze_basic_structure().await?;
-        // let mut knowledge = generator.generate_basic_knowledge(&basic_info).await?;
-
-        // Commit the initial analysis
-        // git_repo.commit_changes("Add basic repository analysis to knowledge file")?;
-
-        // Step 2: Analyze README and root files
-        info!("Step 2: Analyzing README and root files");
-        // let readme_info = analyzer.analyze_readme_and_root().await?;
-        // knowledge = generator.update_with_readme(&knowledge, &readme_info).await?;
-
-        // git_repo.commit_changes("Add README and root files analysis")?;
-
-        // Step 3: Analyze documentation
-        info!("Step 3: Analyzing documentation");
-        // let docs_info = analyzer.analyze_documentation().await?;
-        // knowledge = generator.update_with_docs(&knowledge, &docs_info).await?;
-
-        // git_repo.commit_changes("Add documentation analysis")?;
-
-        // Step 4: Analyze package structure
-        info!("Step 4: Analyzing package/directory structure");
-        // let package_info = analyzer.analyze_package_structure().await?;
-        // knowledge = generator.update_with_packages(&knowledge, &package_info).await?;
-
-        // git_repo.commit_changes("Add package structure analysis")?;
-
-        // Step 5: Final consolidation
-        info!("Step 5: Final consolidation and cleanup");
-        // let final_knowledge = generator.finalize_knowledge(&knowledge).await?;
-        let final_knowledge = "dummy";
-
-        // Write the final knowledge file
-        let output_path = output_file.unwrap_or("README.ai.md");
-        std::fs::write(repo_path.join(output_path), final_knowledge)?;
-
-        // git_repo.commit_changes("Finalize AI knowledge file")?;
-
-        info!("Repository analysis completed successfully");
-        Ok(())
-    }
+    // /// Analyze a repository and generate knowledge file incrementally
+    // pub async fn analyze_repository<P: AsRef<Path>>(
+    //     &self,
+    //     repo_path: P,
+    //     output_file: Option<&str>,
+    // ) -> Result<()> {
+    //     Ok(())
+    // }
 }

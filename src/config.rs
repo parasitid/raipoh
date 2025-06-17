@@ -15,6 +15,9 @@ pub struct Config {
 
     /// Template configuration
     pub template: TemplateConfig,
+
+    /// Path of the output readme.ai.md
+    pub output_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,6 +33,9 @@ pub struct LlmConfig {
 
     /// API base URL (for custom endpoints)
     pub base_url: Option<String>,
+
+    /// Maximum retries
+    pub max_retries: Option<u32>,
 
     /// Maximum tokens per request
     pub max_tokens: Option<u32>,
@@ -100,8 +106,10 @@ impl Default for Config {
                 api_key: String::new(),
                 model: "claude-3-5-sonnet-20241022".to_string(),
                 base_url: None,
+                max_retries: Some(3),
                 max_tokens: Some(4096),
                 temperature: Some(0.7),
+                output_path: "README.ai.md",
             },
             analysis: AnalysisConfig {
                 max_file_size: 1024 * 1024, // 1MB
@@ -197,30 +205,6 @@ impl Config {
             Err(e) if e.is_file_not_found() => Ok(Self::default()),
             Err(e) => Err(e),
         }
-    }
-
-    /// Stores the config while preserving existing non-sensitive values
-    pub fn store_preserving<P: AsRef<Path>>(&self, repo_path: P) -> Result<()> {
-        let repo_path = repo_path.as_ref();
-        let mut new_config = self.clone();
-        
-        // Try to load existing config to preserve values
-        if let Ok(existing) = Self::load(repo_path) {
-            // Preserve non-sensitive fields from existing config
-            new_config.llm.base_url = existing.llm.base_url;
-            new_config.llm.max_tokens = existing.llm.max_tokens;
-            new_config.llm.temperature = existing.llm.temperature;
-            
-            // Preserve analysis config
-            new_config.analysis.exclude_dirs = existing.analysis.exclude_dirs;
-            new_config.analysis.exclude_files = existing.analysis.exclude_files;
-            new_config.analysis.include_extensions = existing.analysis.include_extensions;
-        }
-
-        // Always clear sensitive fields
-        new_config.llm.api_key.clear();
-
-        new_config.to_file(repo_path.join(".raidme.toml"))
     }
 
     /// Store the configuration to the repo-local `.raidme.toml` file,

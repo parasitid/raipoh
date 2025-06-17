@@ -1,10 +1,11 @@
 use clap::{Args, Parser, Subcommand};
 use raidme::{
-    Error,
-    // analyzer::RepoAnalyzer,
+    analyzer::RepositoryAnalyzer,
     config::{Config,LlmProvider},
-    // llm::{LlmBackend},
-    Result,
+    Raidme,
+    Error,
+    LlmClient,
+    Result
 };
 use std::path::PathBuf;
 use tokio;
@@ -86,33 +87,17 @@ async fn run() -> Result<()> {
         Commands::Analyze(args) => {
             let config = create_config(&args)?;
 
+            let raidme = Raidme::new(repo_path, config).await?;
             // Set up database connection
-            let database_path = format!("{}/.raidme.db", args.repo_path.display());
-            let database_url = format!("sqlite:{}", database_path);
-            let pool = SqlitePool::connect(&database_url)
-                .await
-                .context("Failed to connect to SQLite database")?;
-
-            // Verify or create tables using migration
-            sqlx::migrate::Migrator::up(&pool, "migrations/0001_initial_setup.sql")
-                .await
-                .context("Failed to apply database migrations")?;
-
-            println!("Created config: {:?}", config);
-            println!("Database: {}", database_path);
-
-            // Validate config before saving
-            config.validate()?;
-
-            // Store the config (excluding API key)
-            config.store(&args.repo_path)?;
 
             println!("🔍 Starting repository analysis...");
             println!("📁 Repo: {}", args.repo_path.display());
             println!("🤖 Provider: {}", args.provider.as_deref().unwrap_or("default"));
             println!("📄 Output: {}", args.output.display());
+            let llm_client = LlmClient::new(&config)?;
+            let analyzer = RepositoryAnalyzer::new(config, db, llm_client, &args.repo_path)?;
 
-            // analyzer.analyze().await?;
+            analyzer.analyze().await?;
 
             println!("✅ Analysis completed successfully!");
             println!("📄 Knowledge file generated: {}", args.output.display());
@@ -185,6 +170,9 @@ fn create_config(args: &AnalyzeArgs) -> Result<Config> {
     // You can override other parts similarly, e.g. context, commit_each_step, etc.
 
     config.validate()?;
+
+    // Store the config (excluding API key)
+    config.store(&args.repo_path)?;
 
     Ok(config)
 }

@@ -25,7 +25,7 @@ the loop is the following:
 
 in the end, the knowledge file can be rebuilt from scratch from the local db.
 it should be properly formatted and comprehensible by any code ai assisant as a prompt file 
-the tool shall be written in rust, with llm backends such as claude, openai, openrouter and so on.
+the tool shall be written in rust, with llm backends such as anthropic, openai, openrouter and so on.
 
 USE the rust crate rig.
 

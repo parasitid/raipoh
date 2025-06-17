@@ -1,0 +1,242 @@
+   Compiling raidme v0.1.0 (/home/ydegat/dev/poc/raidme)
+error[E0425]: cannot find value `config_file` in this scope
+   --> src/analyzer.rs:334:59
+    |
+334 |             context.add_content_simple(all_knowledge, 90, config_file.to_string());
+    |                                                           ^^^^^^^^^^^ not found in this scope
+
+error[E0404]: expected trait, found struct `LlmClient`
+  --> src/llm.rs:74:60
+   |
+74 |     pub async fn build_context(&mut self, llm_client: &dyn LlmClient) -> Result<String> {
+   |                                                            ^^^^^^^^^ not a trait
+
+error[E0404]: expected trait, found struct `LlmClient`
+   --> src/llm.rs:124:56
+    |
+124 |     async fn summarize_content(&self, llm_client: &dyn LlmClient, content: &str, title: &str, target_length: usize) -> Result<String> {
+    |                                                        ^^^^^^^^^ not a trait
+
+error[E0425]: cannot find value `summarization` in this scope
+   --> src/llm.rs:246:27
+    |
+246 |                  Box::new(summarization) as Box<dyn Agent + Send + Sync>)
+    |                           ^^^^^^^^^^^^^
+    |
+help: the binding `summarization` is available in a different scope in the same function
+   --> src/llm.rs:197:21
+    |
+197 |                 let summarization = client.agent(&config.llm.model)
+    |                     ^^^^^^^^^^^^^
+
+error[E0425]: cannot find value `summarization` in this scope
+   --> src/llm.rs:286:27
+    |
+286 |                  Box::new(summarization) as Box<dyn Agent + Send + Sync>)
+    |                           ^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find value `summarization` in this scope
+   --> src/llm.rs:328:27
+    |
+328 |                  Box::new(summarization) as Box<dyn Agent + Send + Sync>)
+    |                           ^^^^^^^^^^^^^ not found in this scope
+
+warning: unused imports: `Duration` and `sleep`
+ --> src/analyzer.rs:6:19
+  |
+6 | use tokio::time::{sleep, Duration};
+  |                   ^^^^^  ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `std::collections::VecDeque`
+ --> src/llm.rs:5:5
+  |
+5 | use std::collections::VecDeque;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Context`
+ --> src/llm.rs:6:22
+  |
+6 | use anyhow::{Result, Context};
+  |                      ^^^^^^^
+
+error[E0728]: `await` is only allowed inside `async` functions and blocks
+   --> src/analyzer.rs:333:62
+    |
+331 |         let consolidation = self.llm_client.final_consolidation(|| {
+    |                                                                 -- this is not `async`
+332 |             let mut context = LlmContext::new(self.config.max_context_tokens);
+333 |             let all_knowledge = self.get_current_knowledge().await?;
+    |                                                              ^^^^^ only allowed inside `async` functions and blocks
+
+error[E0599]: no method named `generate_final_readme` found for reference `&RepositoryAnalyzer` in the current scope
+   --> src/analyzer.rs:107:22
+    |
+107 |                 self.generate_final_readme().await?;
+    |                      ^^^^^^^^^^^^^^^^^^^^^ method not found in `&RepositoryAnalyzer`
+
+error[E0599]: no variant or associated item named `GlobalInfo` found for enum `StepType` in the current scope
+   --> src/analyzer.rs:131:55
+    |
+26  | pub enum StepType {
+    | ----------------- variant or associated item `GlobalInfo` not found for this enum
+...
+131 |         self.create_analysis_step(&step_id, StepType::GlobalInfo, "Basic repository analysis").await?;
+    |                                                       ^^^^^^^^^^ variant or associated item not found in `StepType`
+
+error[E0609]: no field `max_context_tokens` on type `config::Config`
+   --> src/analyzer.rs:133:55
+    |
+133 |         let mut context = LlmContext::new(self.config.max_context_tokens);
+    |                                                       ^^^^^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `llm`, `analysis`, `git`, `template`, `output_path`
+
+error[E0609]: no field `max_context_tokens` on type `config::Config`
+   --> src/analyzer.rs:135:59
+    |
+135 |             let mut context = LlmContext::new(self.config.max_context_tokens);
+    |                                                           ^^^^^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `llm`, `analysis`, `git`, `template`, `output_path`
+
+error[E0599]: no method named `get_directory_structure` found for reference `&RepositoryAnalyzer` in the current scope
+   --> src/analyzer.rs:145:45
+    |
+145 |             if let Ok(dir_structure) = self.get_directory_structure() {
+    |                                             ^^^^^^^^^^^^^^^^^^^^^^^ method not found in `&RepositoryAnalyzer`
+
+error[E0599]: no method named `get_main_source_files` found for reference `&RepositoryAnalyzer` in the current scope
+   --> src/analyzer.rs:150:42
+    |
+150 |             if let Ok(main_files) = self.get_main_source_files() {
+    |                                          ^^^^^^^^^^^^^^^^^^^^^ method not found in `&RepositoryAnalyzer`
+
+error[E0599]: no variant or associated item named `FinalGeneration` found for enum `StepType` in the current scope
+   --> src/analyzer.rs:326:55
+    |
+26  | pub enum StepType {
+    | ----------------- variant or associated item `FinalGeneration` not found for this enum
+...
+326 |         self.create_analysis_step(&step_id, StepType::FinalGeneration, "Final README generation").await?;
+    |                                                       ^^^^^^^^^^^^^^^ variant or associated item not found in `StepType`
+
+error[E0609]: no field `max_context_tokens` on type `config::Config`
+   --> src/analyzer.rs:330:55
+    |
+330 |         let mut context = LlmContext::new(self.config.max_context_tokens);
+    |                                                       ^^^^^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `llm`, `analysis`, `git`, `template`, `output_path`
+
+error[E0609]: no field `max_context_tokens` on type `config::Config`
+   --> src/analyzer.rs:332:59
+    |
+332 |             let mut context = LlmContext::new(self.config.max_context_tokens);
+    |                                                           ^^^^^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `llm`, `analysis`, `git`, `template`, `output_path`
+
+error[E0609]: no field `id` on type `SqliteRow`
+   --> src/analyzer.rs:510:25
+    |
+510 |                 id: row.id,
+    |                         ^^ unknown field
+
+error[E0609]: no field `step_type` on type `SqliteRow`
+   --> src/analyzer.rs:511:54
+    |
+511 |                 step_type: serde_json::from_str(&row.step_type)?,
+    |                                                      ^^^^^^^^^ unknown field
+
+error[E0609]: no field `status` on type `SqliteRow`
+   --> src/analyzer.rs:512:51
+    |
+512 |                 status: serde_json::from_str(&row.status)?,
+    |                                                   ^^^^^^ unknown field
+
+error[E0609]: no field `input_data` on type `SqliteRow`
+   --> src/analyzer.rs:513:33
+    |
+513 |                 input_data: row.input_data,
+    |                                 ^^^^^^^^^^ unknown field
+
+error[E0609]: no field `output_data` on type `SqliteRow`
+   --> src/analyzer.rs:514:34
+    |
+514 |                 output_data: row.output_data,
+    |                                  ^^^^^^^^^^^ unknown field
+
+error[E0609]: no field `error_message` on type `SqliteRow`
+   --> src/analyzer.rs:515:36
+    |
+515 |                 error_message: row.error_message,
+    |                                    ^^^^^^^^^^^^^ unknown field
+
+error[E0609]: no field `created_at` on type `SqliteRow`
+   --> src/analyzer.rs:516:33
+    |
+516 |                 created_at: row.created_at,
+    |                                 ^^^^^^^^^^ unknown field
+
+error[E0609]: no field `completed_at` on type `SqliteRow`
+   --> src/analyzer.rs:517:35
+    |
+517 |                 completed_at: row.completed_at,
+    |                                   ^^^^^^^^^^^^ unknown field
+
+error[E0609]: no field `category` on type `SqliteRow`
+   --> src/analyzer.rs:551:67
+    |
+551 |             knowledge.push_str(&format!("## {} - {}\n{}\n\n", row.category, row.title, row.content));
+    |                                                                   ^^^^^^^^ unknown field
+
+error[E0609]: no field `title` on type `SqliteRow`
+   --> src/analyzer.rs:551:81
+    |
+551 |             knowledge.push_str(&format!("## {} - {}\n{}\n\n", row.category, row.title, row.content));
+    |                                                                                 ^^^^^ unknown field
+
+error[E0609]: no field `content` on type `SqliteRow`
+   --> src/analyzer.rs:551:92
+    |
+551 |             knowledge.push_str(&format!("## {} - {}\n{}\n\n", row.category, row.title, row.content));
+    |                                                                                            ^^^^^^^ unknown field
+
+error[E0038]: the trait `llm::Agent` is not dyn compatible
+   --> src/llm.rs:146:35
+    |
+146 |     pub basic_analysis_agent: Box<dyn Agent + Send + Sync>,
+    |                                   ^^^^^^^^^^^^^^^^^^^^^^^ `llm::Agent` is not dyn compatible
+    |
+note: for a trait to be dyn compatible it needs to allow building a vtable
+      for more information, visit <https://doc.rust-lang.org/reference/items/traits.html#dyn-compatibility>
+   --> src/llm.rs:138:14
+    |
+137 | pub trait Agent {
+    |           ----- this trait is not dyn compatible...
+138 |     async fn prompt(&self, prompt: &str) -> crate::Result<String>;
+    |              ^^^^^^ ...because method `prompt` is `async`
+    = help: consider moving `prompt` to another trait
+
+error[E0038]: the trait `llm::Agent` is not dyn compatible
+   --> src/llm.rs:350:61
+    |
+350 |     async fn call_with_retry_context<F, Fut>(&self, agent: &dyn Agent, operation: F) -> Result<String>
+    |                                                             ^^^^^^^^^ `llm::Agent` is not dyn compatible
+    |
+note: for a trait to be dyn compatible it needs to allow building a vtable
+      for more information, visit <https://doc.rust-lang.org/reference/items/traits.html#dyn-compatibility>
+   --> src/llm.rs:138:14
+    |
+137 | pub trait Agent {
+    |           ----- this trait is not dyn compatible...
+138 |     async fn prompt(&self, prompt: &str) -> crate::Result<String>;
+    |              ^^^^^^ ...because method `prompt` is `async`
+    = help: consider moving `prompt` to another trait
+
+Some errors have detailed explanations: E0038, E0404, E0425, E0599, E0609, E0728.
+For more information about an error, try `rustc --explain E0038`.
+warning: `raidme` (lib) generated 3 warnings
+error: could not compile `raidme` (lib) due to 29 previous errors; 3 warnings emitted

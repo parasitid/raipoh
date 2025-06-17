@@ -7,7 +7,7 @@ use tokio::time::{sleep, Duration};
 
 use crate::{
     config::{Config},
-    llm::LlmClient,
+    llm::{LlmClient,LlmContext},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,12 +24,13 @@ pub struct AnalysisStep {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StepType {
-    GlobalInfo,
+    Basic,
+    Readme,
     Documentation,
-    DirectoryStructure,
-    FileAnalysis,
-    ArchitectureDiagram,
-    FinalGeneration,
+    Package,
+    Coding,
+    Architecture,
+    FinalConsolidation,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,7 +56,7 @@ pub struct KnowledgeEntry {
 pub struct RepositoryAnalyzer {
     config: Config,
     db: SqlitePool,
-    llm_client: Box<LlmClient>,
+    llm_client: LlmClient,
     repo_path: PathBuf,
 }
 
@@ -91,102 +92,77 @@ impl RepositoryAnalyzer {
     }
 
     async fn run_full_analysis(&self) -> Result<()> {
-        // Step 1: Gather global information
-        self.analyze_global_info().await?;
-
-        // Step 2: Analyze documentation
-        self.analyze_documentation().await?;
-
-        // Step 3: Analyze directory structure
-        self.analyze_directory_structure().await?;
-
-        // Step 4: Analyze individual files
-        self.analyze_files().await?;
-
-        // Step 5: Generate architecture diagrams
-        self.generate_architecture_diagrams().await?;
+        // Step 1: Gather basic information
+        self.analyze_basic().await?;
 
         // Step 6: Generate final README.ai.md
-        self.generate_final_readme().await?;
+        self.generate_final_consolidation().await?;
 
         Ok(())
     }
 
     async fn resume_analysis(&self, last_step: AnalysisStep) -> Result<()> {
         match last_step.step_type {
-            StepType::GlobalInfo => {
-                self.analyze_documentation().await?;
-                self.analyze_directory_structure().await?;
-                self.analyze_files().await?;
-                self.generate_architecture_diagrams().await?;
+            StepType::Basic => {
                 self.generate_final_readme().await?;
+            }
+            StepType::Readme => {
             }
             StepType::Documentation => {
-                self.analyze_directory_structure().await?;
-                self.analyze_files().await?;
-                self.generate_architecture_diagrams().await?;
-                self.generate_final_readme().await?;
             }
-            StepType::DirectoryStructure => {
-                self.analyze_files().await?;
-                self.generate_architecture_diagrams().await?;
-                self.generate_final_readme().await?;
+            StepType::Package => {
             }
-            StepType::FileAnalysis => {
-                self.generate_architecture_diagrams().await?;
-                self.generate_final_readme().await?;
+            StepType::Coding => {
             }
-            StepType::ArchitectureDiagram => {
-                self.generate_final_readme().await?;
+            StepType::Architecture => {
             }
-            StepType::FinalGeneration => {
+            StepType::FinalConsolidation => {
+                self.generate_final_consolidation().await?;
                 println!("Analysis already completed!");
             }
         }
         Ok(())
     }
 
-    async fn analyze_global_info(&self) -> Result<()> {
-        println!("Analyzing global repository information...");
+    async fn analyze_basic(&self) -> Result<()> {
+        println!("Analyzing basic repository information...");
 
         let step_id = uuid::Uuid::new_v4().to_string();
-        self.create_analysis_step(&step_id, StepType::GlobalInfo, "Global repository analysis").await?;
+        self.create_analysis_step(&step_id, StepType::GlobalInfo, "Basic repository analysis").await?;
 
-        let mut global_info = String::new();
+        let mut context = LlmContext::new(self.config.max_context_tokens);
+        let analysis = self.llm_client.architecture_analysis(|| {
+            let mut context = LlmContext::new(self.config.max_context_tokens);
 
-        // // Read README files
-        // for readme_name in &["README.md", "README.rst", "README.txt", "README"] {
-        //     let readme_path = self.config.repository_path.join(readme_name);
-        //     if readme_path.exists() {
-        //         let content = fs::read_to_string(&readme_path)
-        //             .context(format!("Failed to read {:?}", readme_path))?;
-        //         global_info.push_str(&format!("=== {} ===\n{}\n\n", readme_name, content));
-        //     }
-        // }
+            // Add package files with high priority
+            for config_file in &["Cargo.toml", "package.json", "pyproject.toml"] {
+                if let Ok(content) = std::fs::read_to_string(config_file) {
+                    context.add_content_simple(content, 90, config_file.to_string());
+                }
+            }
 
-        // // Read package/project files
-        // for config_file in &["Cargo.toml", "package.json", "pyproject.toml", "pom.xml", "go.mod"] {
-        //     let config_path = self.config.repository_path.join(config_file);
-        //     if config_path.exists() {
-        //         let content = fs::read_to_string(&config_path)
-        //             .context(format!("Failed to read {:?}", config_path))?;
-        //         global_info.push_str(&format!("=== {} ===\n{}\n\n", config_file, content));
-        //     }
-        // }
+            // Add directory structure with medium priority
+            if let Ok(dir_structure) = self.get_directory_structure() {
+                context.add_content_simple(dir_structure, 70, "Directory Structure".to_string());
+            }
 
-        // // Get directory structure overview
-        // let dir_structure = self.get_directory_structure(&self.config.repository_path, 2)?;
-        // global_info.push_str(&format!("=== Directory Structure (2 levels) ===\n{}\n\n", dir_structure));
+            // Add main source files with lower priority
+            if let Ok(main_files) = self.get_main_source_files() {
+                for (file_path, content) in main_files {
+                    context.add_content_simple(content, 50, file_path);
+                }
+            }
 
-        let prompt = self.create_global_analysis_prompt();
-        let analysis = self.call_llm_with_retry(&prompt, &global_info).await?;
+            Ok(context)
+        }).await?;
+
 
         // Store knowledge
         let knowledge_entry = KnowledgeEntry {
             id: uuid::Uuid::new_v4().to_string(),
-            category: "global".to_string(),
+            category: "basic".to_string(),
             subcategory: None,
-            title: "Repository Overview".to_string(),
+            title: "Repository Basic Overview".to_string(),
             content: analysis.clone(),
             relevance_score: 1.0,
             created_at: chrono::Utc::now(),
@@ -196,7 +172,7 @@ impl RepositoryAnalyzer {
         self.store_knowledge_entry(&knowledge_entry).await?;
         self.complete_analysis_step(&step_id, &analysis).await?;
 
-        println!("Global analysis completed");
+        println!("Basic analysis completed");
         Ok(())
     }
 
@@ -343,18 +319,25 @@ impl RepositoryAnalyzer {
     //     Ok(())
     // }
 
-    async fn generate_final_readme(&self) -> Result<()> {
+    async fn generate_final_consolidation(&self) -> Result<()> {
         println!("Generating final README.ai.md...");
 
         let step_id = uuid::Uuid::new_v4().to_string();
         self.create_analysis_step(&step_id, StepType::FinalGeneration, "Final README generation").await?;
 
-        let all_knowledge = self.get_current_knowledge().await?;
-        let prompt = self.create_final_readme_prompt();
-        let readme_content = self.call_llm_with_retry(&prompt, &all_knowledge).await?;
+
+
+        let mut context = LlmContext::new(self.config.max_context_tokens);
+        let consolidation = self.llm_client.final_consolidation(|| {
+            let mut context = LlmContext::new(self.config.max_context_tokens);
+            let all_knowledge = self.get_current_knowledge().await?;
+            context.add_content_simple(all_knowledge, 90, config_file.to_string());
+            Ok(context)
+        }).await?;
+
 
         // Write to file
-        fs::write(&self.config.output_path, &readme_content)
+        fs::write(&self.config.output_path, &consolidation)
             .context("Failed to write README.ai.md")?;
 
         self.complete_analysis_step(&step_id, "README.ai.md generated successfully").await?;
@@ -362,28 +345,6 @@ impl RepositoryAnalyzer {
         println!("Final README.ai.md generated at {:?}", self.config.output_path);
         Ok(())
     }
-
-    // Helper methods
-
-    async fn call_llm_with_retry(&self, prompt: &str, context: &str) -> Result<String> {
-        let mut last_error = None;
-
-        for attempt in 1..=self.config.max_retries {
-            match self.llm_client.generate_completion(prompt, context).await {
-                Ok(result) => return Ok(result),
-                Err(e) => {
-                    last_error = Some(e);
-                    if attempt < self.config.max_retries {
-                        println!("LLM call failed (attempt {}), retrying in {} seconds...", attempt, self.config.retry_delay_seconds);
-                        sleep(Duration::from_secs(self.config.retry_delay_seconds)).await;
-                    }
-                }
-            }
-        }
-
-        Err(last_error.unwrap())
-    }
-
     // fn get_directory_structure(&self, path: &Path, max_depth: usize) -> Result<String> {
     //     let mut result = String::new();
     //     self.build_tree_string(path, &mut result, "", max_depth, 0)?;
@@ -698,142 +659,5 @@ Based on all the analyzed knowledge, create a well-structured README.ai.md that 
 - Be comprehensive but avoid unnecessary verbosity
 
 The goal is to create documentation that enables any AI coding assistant to understand the project deeply and provide contextually appropriate suggestions and modifications."#.to_string()
-    }
-}
-
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-    use std::fs;
-
-    fn create_test_repo() -> TempDir {
-        let temp_dir = TempDir::new().unwrap();
-        let repo_path = temp_dir.path();
-
-        // Create basic project structure
-        fs::create_dir_all(repo_path.join("src")).unwrap();
-        fs::create_dir_all(repo_path.join("docs")).unwrap();
-        fs::create_dir_all(repo_path.join("tests")).unwrap();
-
-        // Create some files
-        fs::write(repo_path.join("README.md"), "# Test Project\nA test project for analysis").unwrap();
-        fs::write(repo_path.join("Cargo.toml"), r#"
-[package]
-name = "test-project"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-tokio = "1.0"
-serde = "1.0"
-"#).unwrap();
-
-        fs::write(repo_path.join("src/main.rs"), r#"
-use std::collections::HashMap;
-
-fn main() {
-    println!("Hello, world!");
-    let data = process_data();
-    println!("Processed: {:?}", data);
-}
-
-fn process_data() -> HashMap<String, i32> {
-    let mut map = HashMap::new();
-    map.insert("key1".to_string(), 42);
-    map.insert("key2".to_string(), 84);
-    map
-}
-"#).unwrap();
-
-        fs::write(repo_path.join("src/lib.rs"), r#"
-pub mod utils;
-
-pub struct DataProcessor {
-    pub name: String,
-}
-
-impl DataProcessor {
-    pub fn new(name: String) -> Self {
-        Self { name }
-    }
-
-    pub fn process(&self, input: &str) -> String {
-        format!("Processed by {}: {}", self.name, input)
-    }
-}
-"#).unwrap();
-
-        fs::write(repo_path.join("docs/architecture.md"), r#"
-# Architecture
-
-This project follows a modular architecture with clear separation of concerns.
-
-## Components
-
-- **DataProcessor**: Main processing component
-- **Utils**: Utility functions and helpers
-
-## Data Flow
-
-1. Input received
-2. Data processed through DataProcessor
-3. Results returned
-"#).unwrap();
-
-        temp_dir
-    }
-
-    #[tokio::test]
-    async fn test_directory_structure_analysis() {
-        let temp_repo = create_test_repo();
-        let repo_path = temp_repo.path().to_path_buf();
-        let mut config = Config::load_or_default(repo_path.clone())?;
-        config.llm.api_key = "test-key".to_string();
-
-        // This is a basic test - in real scenarios you'd have a proper LLM client
-        // For now, just test that the structure can be read
-        assert!(repo_path.join("src").exists());
-        assert!(repo_path.join("docs").exists());
-        assert!(repo_path.join("Cargo.toml").exists());
-    }
-
-    #[test]
-    fn test_identify_key_files() {
-        let temp_repo = create_test_repo();
-        let repo_path = temp_repo.path().to_path_buf();
-        let mut config = Config::load_or_default(repo_path.clone())?;
-        config.llm.api_key = "test-key".to_string();
-
-        // Create analyzer without database for testing
-        let analyzer = RepositoryAnalyzer {
-            config: config.clone(),
-            db: SqlitePool::connect("sqlite::memory:").await.unwrap(), // This won't work in sync test
-            llm_client: Box::new(MockLLMClient {}),
-        };
-
-        // This test would need to be async or restructured
-        // For now, just test the file identification logic directly
-        let key_files = analyzer.identify_key_files().unwrap();
-
-        // Should find main.rs and lib.rs
-        let main_rs_found = key_files.iter().any(|p| p.file_name().unwrap() == "main.rs");
-        let lib_rs_found = key_files.iter().any(|p| p.file_name().unwrap() == "lib.rs");
-
-        assert!(main_rs_found);
-        assert!(lib_rs_found);
-    }
-}
-
-// Mock LLM client for testing
-#[cfg(test)]
-struct MockLLMClient;
-
-#[cfg(test)]
-#[async_trait::async_trait]
-impl LLMClient for MockLLMClient {
-    async fn generate_completion(&self, _prompt: &str, _context: &str) -> Result<String> {
-        Ok("Mock analysis result".to_string())
     }
 }

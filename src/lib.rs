@@ -13,7 +13,7 @@ pub use error::{Error, Result};
 // pub use git::GitRepository;
 pub use llm::LlmClient;
 
-use std::path::{Path,PathBuf};
+use std::path::{PathBuf};
 use sqlx::{sqlite::SqlitePool, migrate::Migrator};
 //
 /// Main API for the raidme library

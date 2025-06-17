@@ -1,7 +1,138 @@
 use crate::config::{Config, LlmProvider};
-use crate::error::Result;
+use crate::error::Result as ResultOrErr;
 use std::time::Duration;
 use tokio::time::sleep;
+use std::collections::VecDeque;
+use anyhow::{Result, Context};
+
+
+#[derive(Debug, Clone)]
+pub struct ContentItem {
+    pub content: String,
+    pub priority: u32, // Higher number = higher priority
+    pub title: String,
+    pub can_summarize: bool, // Whether this content can be summarized if needed
+}
+
+impl ContentItem {
+    pub fn new(content: String, priority: u32, title: String) -> Self {
+        Self {
+            content,
+            priority,
+            title,
+            can_summarize: true,
+        }
+    }
+
+    pub fn new_non_summarizable(content: String, priority: u32, title: String) -> Self {
+        Self {
+            content,
+            priority,
+            title,
+            can_summarize: false,
+        }
+    }
+
+    pub fn estimated_tokens(&self) -> usize {
+        // Rough estimation: ~4 characters per token
+        self.content.len() / 4
+    }
+}
+
+#[derive(Debug)]
+pub struct LlmContext {
+    pub items: Vec<ContentItem>,
+    pub max_context_tokens: usize,
+}
+
+impl LlmContext {
+    pub fn new(max_context_tokens: usize) -> Self {
+        Self {
+            items: Vec::new(),
+            max_context_tokens,
+        }
+    }
+
+    pub fn add_content(&mut self, item: ContentItem) {
+        self.items.push(item);
+    }
+
+    pub fn add_content_simple(&mut self, content: String, priority: u32, title: String) {
+        self.add_content(ContentItem::new(content, priority, title));
+    }
+
+    pub fn total_estimated_tokens(&self) -> usize {
+        self.items.iter().map(|item| item.estimated_tokens()).sum()
+    }
+
+    // Sort items by priority (highest first)
+    fn sort_by_priority(&mut self) {
+        self.items.sort_by(|a, b| b.priority.cmp(&a.priority));
+    }
+
+    // Create a context string that fits within the token limit
+    pub async fn build_context(&mut self, llm_client: &dyn LlmClient) -> Result<String> {
+        self.sort_by_priority();
+
+        let total_tokens = self.total_estimated_tokens();
+        if total_tokens <= self.max_context_tokens {
+            // Everything fits, return as-is
+            return Ok(self.items.iter()
+                .map(|item| format!("=== {} ===\n{}\n\n", item.title, item.content))
+                .collect::<Vec<_>>()
+                .join(""));
+        }
+
+        // Need to reduce context size
+        let mut result_items = Vec::new();
+        let mut remaining_tokens = self.max_context_tokens;
+
+        for item in &mut self.items {
+            let item_tokens = item.estimated_tokens();
+
+            if item_tokens <= remaining_tokens {
+                // Item fits as-is
+                result_items.push(format!("=== {} ===\n{}\n\n", item.title, item.content));
+                remaining_tokens -= item_tokens;
+            } else if item.can_summarize && remaining_tokens > 100 {
+                // Try to summarize the item to fit
+                let target_length = (remaining_tokens - 50) * 4; // Convert tokens back to approximate chars
+                let summarized = self.summarize_content(llm_client, &item.content, &item.title, target_length).await?;
+                let summarized_tokens = summarized.len() / 4;
+
+                if summarized_tokens <= remaining_tokens {
+                    result_items.push(format!("=== {} (Summarized) ===\n{}\n\n", item.title, summarized));
+                    remaining_tokens -= summarized_tokens;
+                } else {
+                    // Even summarized version doesn't fit, skip this item
+                    println!("Warning: Skipping '{}' - too large even when summarized", item.title);
+                }
+            } else {
+                // Item doesn't fit and can't be summarized, skip it
+                println!("Warning: Skipping '{}' - exceeds remaining context space", item.title);
+            }
+
+            if remaining_tokens < 100 {
+                // Not enough space for more content
+                break;
+            }
+        }
+
+        Ok(result_items.join(""))
+    }
+
+    async fn summarize_content(&self, llm_client: &dyn LlmClient, content: &str, title: &str, target_length: usize) -> Result<String> {
+        let summarize_prompt = format!(
+            "Please provide a concise summary of the following content from '{}'. \
+            The summary should be approximately {} characters long and capture the key information:\n\n{}",
+            title, target_length, content
+        );
+
+        // Use a simple context for summarization
+        llm_client.generate_completion(&summarize_prompt, "").await
+    }
+}
+
 
 pub trait Agent {
     async fn prompt(&self, prompt: &str) -> crate::Result<String>;
@@ -12,26 +143,27 @@ use rig::providers::{anthropic, openai, ollama, openrouter};
 
 /// Unified LLM client that abstracts over different providers
 pub struct LlmClient {
-    basic_analysis_agent: Box<dyn Agent + Send + Sync>,
-    readme_analysis_agent: Box<dyn Agent + Send + Sync>,
-    documentation_analysis_agent: Box<dyn Agent + Send + Sync>,
-    coding_analysis_agent: Box<dyn Agent + Send + Sync>,
-    architecture_analysis_agent: Box<dyn Agent + Send + Sync>,
-    package_analysis_agent: Box<dyn Agent + Send + Sync>,
-    file_analysis_agent: Box<dyn Agent + Send + Sync>,
-    final_consolidation_agent: Box<dyn Agent + Send + Sync>,
-    provider: LlmProvider,
-    max_retries: u32,
-    retry_delay_seconds: u32,
+    pub basic_analysis_agent: Box<dyn Agent + Send + Sync>,
+    pub readme_analysis_agent: Box<dyn Agent + Send + Sync>,
+    pub documentation_analysis_agent: Box<dyn Agent + Send + Sync>,
+    pub coding_analysis_agent: Box<dyn Agent + Send + Sync>,
+    pub architecture_analysis_agent: Box<dyn Agent + Send + Sync>,
+    pub package_analysis_agent: Box<dyn Agent + Send + Sync>,
+    pub file_analysis_agent: Box<dyn Agent + Send + Sync>,
+    pub final_consolidation_agent: Box<dyn Agent + Send + Sync>,
+    pub summarization_agent: Box<dyn Agent + Send + Sync>,
+    pub provider: LlmProvider,
+    pub max_retries: u32,
+    pub retry_delay_seconds: u32,
 }
 
 impl LlmClient {
     /// Create a new LLM client from configuration
-    pub fn new(config: &Config) -> Result<Self> {
+    pub fn new(config: &Config) -> ResultOrErr<Self> {
         config.validate()?;
 
         // Create base client based on provider
-        let (basic_agent, file_agent, readme_agent, doc_agent, package_agent, coding_agent, architecture_agent, final_agent) = match config.llm.provider {
+        let (basic_agent, file_agent, readme_agent, doc_agent, package_agent, coding_agent, architecture_agent, final_agent, summarization_agent) = match config.llm.provider {
             LlmProvider::OpenAI => {
                 let mut client = openai::Client::new(&config.llm.api_key);
                 if let Some(base_url) = &config.llm.base_url {
@@ -56,14 +188,24 @@ impl LlmClient {
                 let coding = client.agent(&config.llm.model)
                     .preamble(SystemPrompts::coding_analysis())
                     .build();
-                let archicture = client.agent(&config.llm.model)
-                    .preamble(SystemPrompts::archicture_analysis())
+                let architecture = client.agent(&config.llm.model)
+                    .preamble(SystemPrompts::architecture_analysis())
                     .build();
                 let final_agent = client.agent(&config.llm.model)
                     .preamble(SystemPrompts::final_consolidation())
                     .build();
-
-                (Box::new(basic), Box::new(readme), Box::new(doc), Box::new(package), Box::new(final_agent))
+                let summarization = client.agent(&config.llm.model)
+                    .preamble(SystemPrompts::summarization())
+                    .build();
+                (Box::new(basic) as Box<dyn Agent + Send + Sync>,
+                 Box::new(file) as Box<dyn Agent + Send + Sync>,
+                 Box::new(readme) as Box<dyn Agent + Send + Sync>,
+                 Box::new(doc) as Box<dyn Agent + Send + Sync>,
+                 Box::new(package) as Box<dyn Agent + Send + Sync>,
+                 Box::new(coding) as Box<dyn Agent + Send + Sync>,
+                 Box::new(architecture) as Box<dyn Agent + Send + Sync>,
+                 Box::new(final_agent) as Box<dyn Agent + Send + Sync>,
+                 Box::new(summarization) as Box<dyn Agent + Send + Sync>)
             }
             LlmProvider::Anthropic => {
                 let client = anthropic::Client::new(&config.llm.api_key);
@@ -83,8 +225,8 @@ impl LlmClient {
                 let coding = client.agent(&config.llm.model)
                     .preamble(SystemPrompts::coding_analysis())
                     .build();
-                let archicture = client.agent(&config.llm.model)
-                    .preamble(SystemPrompts::archicture_analysis())
+                let architecture = client.agent(&config.llm.model)
+                    .preamble(SystemPrompts::architecture_analysis())
                     .build();
                 let package = client.agent(&config.llm.model)
                     .preamble(SystemPrompts::package_analysis())
@@ -93,7 +235,15 @@ impl LlmClient {
                     .preamble(SystemPrompts::final_consolidation())
                     .build();
 
-                (Box::new(basic), Box::new(readme), Box::new(doc), Box::new(package), Box::new(final_agent))
+                (Box::new(basic) as Box<dyn Agent + Send + Sync>,
+                 Box::new(file) as Box<dyn Agent + Send + Sync>,
+                 Box::new(readme) as Box<dyn Agent + Send + Sync>,
+                 Box::new(doc) as Box<dyn Agent + Send + Sync>,
+                 Box::new(package) as Box<dyn Agent + Send + Sync>,
+                 Box::new(coding) as Box<dyn Agent + Send + Sync>,
+                 Box::new(architecture) as Box<dyn Agent + Send + Sync>,
+                 Box::new(final_agent) as Box<dyn Agent + Send + Sync>,
+                 Box::new(summarization) as Box<dyn Agent + Send + Sync>)
             }
             LlmProvider::OpenRouter => {
                 let mut client = openrouter::Client::new(&config.llm.api_key);
@@ -116,8 +266,8 @@ impl LlmClient {
                 let coding = client.agent(&config.llm.model)
                     .preamble(SystemPrompts::coding_analysis())
                     .build();
-                let archicture = client.agent(&config.llm.model)
-                    .preamble(SystemPrompts::archicture_analysis())
+                let architecture = client.agent(&config.llm.model)
+                    .preamble(SystemPrompts::architecture_analysis())
                     .build();
                 let package = client.agent(&config.llm.model)
                     .preamble(SystemPrompts::package_analysis())
@@ -125,8 +275,15 @@ impl LlmClient {
                 let final_agent = client.agent(&config.llm.model)
                     .preamble(SystemPrompts::final_consolidation())
                     .build();
-
-                (Box::new(basic), Box::new(readme), Box::new(doc), Box::new(package), Box::new(final_agent))
+                (Box::new(basic) as Box<dyn Agent + Send + Sync>,
+                 Box::new(file) as Box<dyn Agent + Send + Sync>,
+                 Box::new(readme) as Box<dyn Agent + Send + Sync>,
+                 Box::new(doc) as Box<dyn Agent + Send + Sync>,
+                 Box::new(package) as Box<dyn Agent + Send + Sync>,
+                 Box::new(coding) as Box<dyn Agent + Send + Sync>,
+                 Box::new(architecture) as Box<dyn Agent + Send + Sync>,
+                 Box::new(final_agent) as Box<dyn Agent + Send + Sync>,
+                 Box::new(summarization) as Box<dyn Agent + Send + Sync>)
             }
             LlmProvider::Ollama => {
                 let base_url = config
@@ -151,8 +308,8 @@ impl LlmClient {
                 let coding = client.agent(&config.llm.model)
                     .preamble(SystemPrompts::coding_analysis())
                     .build();
-                let archicture = client.agent(&config.llm.model)
-                    .preamble(SystemPrompts::archicture_analysis())
+                let architecture = client.agent(&config.llm.model)
+                    .preamble(SystemPrompts::architecture_analysis())
                     .build();
                 let package = client.agent(&config.llm.model)
                     .preamble(SystemPrompts::package_analysis())
@@ -160,8 +317,15 @@ impl LlmClient {
                 let final_agent = client.agent(&config.llm.model)
                     .preamble(SystemPrompts::final_consolidation())
                     .build();
-
-                (Box::new(basic), Box::new(readme), Box::new(doc), Box::new(package), Box::new(final_agent))
+                (Box::new(basic) as Box<dyn Agent + Send + Sync>,
+                 Box::new(file) as Box<dyn Agent + Send + Sync>,
+                 Box::new(readme) as Box<dyn Agent + Send + Sync>,
+                 Box::new(doc) as Box<dyn Agent + Send + Sync>,
+                 Box::new(package) as Box<dyn Agent + Send + Sync>,
+                 Box::new(coding) as Box<dyn Agent + Send + Sync>,
+                 Box::new(architecture) as Box<dyn Agent + Send + Sync>,
+                 Box::new(final_agent) as Box<dyn Agent + Send + Sync>,
+                 Box::new(summarization) as Box<dyn Agent + Send + Sync>)
             }
         };
 
@@ -174,25 +338,57 @@ impl LlmClient {
             coding_analysis_agent: coding_agent,
             architecture_analysis_agent: architecture_agent,
             final_consolidation_agent: final_agent,
+            summarization_agent: summarization_agent,
+
             provider: config.llm.provider.clone(),
             retry_delay_seconds: config.retry_delay_seconds,
             max_retries: config.max_retries.unwrap_or(3),
         })
 
     }
-
-    /// Generic retry wrapper for LLM calls
-    async fn call_with_retry<F, Fut>(&self, operation: F) -> Result<String>
+   /// Generic retry wrapper for LLM calls with context management
+    async fn call_with_retry_context<F, Fut>(&self, agent: &dyn Agent, operation: F) -> Result<String>
     where
         F: Fn() -> Fut,
-        Fut: std::future::Future<Output = Result<String>>,
+        Fut: std::future::Future<Output = Result<LlmContext>>,
     {
         let mut last_error = None;
         let max_retries = self.max_retries;
         let retry_delay = self.retry_delay_seconds;
 
         for attempt in 1..=max_retries {
-            match operation().await {
+            // Get the context for this attempt
+            let mut context = match operation().await {
+                Ok(ctx) => ctx,
+                Err(e) => {
+                    last_error = Some(e);
+                    if attempt < max_retries {
+                        println!("Context preparation failed (attempt {}), retrying in {} seconds...", attempt, retry_delay);
+                        sleep(Duration::from_secs(retry_delay)).await;
+                        continue;
+                    } else {
+                        break;
+                    }
+                }
+            };
+
+            // Build the context string with summarization if needed
+            let context_str = match context.build_context(&*self.summarization_agent).await {
+                Ok(ctx) => ctx,
+                Err(e) => {
+                    last_error = Some(e);
+                    if attempt < max_retries {
+                        println!("Context building failed (attempt {}), retrying in {} seconds...", attempt, retry_delay);
+                        sleep(Duration::from_secs(retry_delay)).await;
+                        continue;
+                    } else {
+                        break;
+                    }
+                }
+            };
+
+            // Make the LLM call
+            match agent.prompt(&context_str).await {
                 Ok(result) => return Ok(result),
                 Err(e) => {
                     last_error = Some(e);
@@ -206,61 +402,63 @@ impl LlmClient {
         Err(last_error.unwrap())
     }
 
-   /// Generate basic repository analysis
-    pub async fn basic_analysis(&self, prompt: &str) -> Result<String> {
-        self.call_with_retry(|| async {
-            self.basic_analysis_agent.prompt(prompt).await
+   /// Generate basic repository analysis with context management
+    pub async fn basic_analysis(&self, context_builder: impl Fn() -> Result<LlmContext>) -> Result<String> {
+        self.call_with_retry_context(&*self.basic_analysis_agent, || async {
+            context_builder()
         }).await
     }
 
-    /// Generate README analysis
-    pub async fn readme_analysis(&self, prompt: &str) -> Result<String> {
-        self.call_with_retry(|| async {
-            self.readme_analysis_agent.prompt(prompt).await
+    /// Generate README analysis with context management
+    pub async fn readme_analysis(&self, context_builder: impl Fn() -> Result<LlmContext>) -> Result<String> {
+        self.call_with_retry_context(&*self.readme_analysis_agent, || async {
+            context_builder()
         }).await
     }
 
-    /// Generate documentation analysis
-    pub async fn documentation_analysis(&self, prompt: &str) -> Result<String> {
-        self.call_with_retry(|| async {
-            self.documentation_analysis_agent.prompt(prompt).await
+    /// Generate documentation analysis with context management
+    pub async fn documentation_analysis(&self, context_builder: impl Fn() -> Result<LlmContext>) -> Result<String> {
+        self.call_with_retry_context(&*self.documentation_analysis_agent, || async {
+            context_builder()
         }).await
     }
 
-    /// Generate package/structure analysis
-    pub async fn package_analysis(&self, prompt: &str) -> Result<String> {
-        self.call_with_retry(|| async {
-            self.package_analysis_agent.prompt(prompt).await
+    /// Generate package/structure analysis with context management
+    pub async fn package_analysis(&self, context_builder: impl Fn() -> Result<LlmContext>) -> Result<String> {
+        self.call_with_retry_context(&*self.package_analysis_agent, || async {
+            context_builder()
         }).await
     }
 
-    /// Generate architecture analysis with diagrams
-    pub async fn architecture_analysis(&self, prompt: &str) -> Result<String> {
-        self.call_with_retry(|| async {
-            self.architecture_analysis_agent.prompt(prompt).await
+    /// Generate architecture analysis with context management
+    pub async fn architecture_analysis(&self, context_builder: impl Fn() -> Result<LlmContext>) -> Result<String> {
+        self.call_with_retry_context(&*self.architecture_analysis_agent, || async {
+            context_builder()
         }).await
     }
 
-    /// Generate coding analysis with diagrams
-    pub async fn coding_analysis(&self, prompt: &str) -> Result<String> {
-        self.call_with_retry(|| async {
-            self.coding_analysis_agent.prompt(prompt).await
+    /// Generate coding analysis with context management
+    pub async fn coding_analysis(&self, context_builder: impl Fn() -> Result<LlmContext>) -> Result<String> {
+        self.call_with_retry_context(&*self.coding_analysis_agent, || async {
+            context_builder()
         }).await
     }
 
-    /// Generate file analysis
-    pub async fn file_analysis(&self, prompt: &str) -> Result<String> {
-        self.call_with_retry(|| async {
-            self.final_consolidation_agent.prompt(prompt).await
+    /// Generate file analysis with context management
+    pub async fn file_analysis(&self, context_builder: impl Fn() -> Result<LlmContext>) -> Result<String> {
+        self.call_with_retry_context(&*self.file_analysis_agent, || async {
+            context_builder()
         }).await
     }
 
-    /// Generate final consolidation
-    pub async fn final_consolidation(&self, prompt: &str) -> Result<String> {
-        self.call_with_retry(|| async {
-            self.final_consolidation_agent.prompt(prompt).await
+    /// Generate final consolidation with context management
+    pub async fn final_consolidation(&self, context_builder: impl Fn() -> Result<LlmContext>) -> Result<String> {
+        self.call_with_retry_context(&*self.final_consolidation_agent, || async {
+            context_builder()
         }).await
     }
+
+
     /// Get the provider type
     pub fn provider(&self) -> &LlmProvider {
         &self.provider
@@ -627,6 +825,22 @@ The final document should be:
 - Useful for both new contributors and experienced developers
 
 Format the final document as a professional technical documentation in Markdown."#
+    }
+
+    pub fn summarization() -> &'static str {
+        "You are a specialized summarization agent. Your task is to create concise, \
+         informative summaries of text content while preserving the most important information. \
+         When summarizing:
+
+        1. Focus on key facts, main concepts, and critical details
+        2. Maintain the original context and meaning
+        3. Use clear, concise language
+        4. Preserve technical terms and important names/identifiers
+        5. Structure the summary logically
+        6. Stay within the requested length while maximizing information density
+
+        Always aim to create summaries that allow someone to understand the essential \
+        content without reading the full original text."
     }
 
 }

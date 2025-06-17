@@ -1,6 +1,12 @@
 use crate::config::{Config, LlmProvider};
 use crate::error::Result;
-use rig::agent::Agent;
+use std::time::Duration;
+use tokio::time::sleep;
+
+pub trait Agent {
+    async fn prompt(&self, prompt: &str) -> crate::Result<String>;
+}
+
 use rig::completion::Prompt;
 use rig::providers::{anthropic, openai, ollama, openrouter};
 
